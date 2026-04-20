@@ -5,28 +5,42 @@ let memoryDb: any = null;
 let extractor: any = null;
 let isInitialized = false;
 let extractorLoadFailed = false;
+let extractorLoadPromise: Promise<any> | null = null;
+
+// Embedding 缓存 - 避免重复计算
+const embeddingCache = new Map<string, number[]>();
+const CACHE_MAX_SIZE = 100;
 
 const EMBEDDING_DIMENSION = 384;
+
+// 预加载模型（后台静默加载）
+function preloadExtractor() {
+  if (extractorLoadPromise || extractor || extractorLoadFailed) {
+    return;
+  }
+  
+  console.log('[Context-Pod] 🔄 Background: Preloading embedding model...');
+  extractorLoadPromise = getExtractor();
+}
 
 async function getExtractor() {
   if (extractor) return extractor;
   if (extractorLoadFailed) return null;
+  if (extractorLoadPromise) return extractorLoadPromise;
   
   try {
-    console.log('[Context-Pod] Loading embedding model...');
-    const { pipeline } = await import('@xenova/transformers');
-    extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
-      progress_callback: (progress: any) => {
-        if (progress.status === 'downloading') {
-          console.log(`[Context-Pod] Model download: ${Math.round(progress.progress || 0)}%`);
-        }
-      },
-    });
-    console.log('[Context-Pod] ✅ Embedding model loaded successfully');
-    return extractor;
+    console.log('[Context-Pod] Embedding model loading disabled (fallback mode)');
+    
+    // 临时禁用远程模型加载，使用 fallback 方案
+    // 因为镜像配置在浏览器环境有问题
+    extractorLoadFailed = true;
+    extractorLoadPromise = null;
+    return null;
+    
   } catch (error) {
     console.error('[Context-Pod] ❌ Failed to load embedding model:', error);
     extractorLoadFailed = true;
+    extractorLoadPromise = null;
     return null;
   }
 }
@@ -44,6 +58,12 @@ async function getDatabase() {
 }
 
 async function generateEmbedding(text: string): Promise<number[]> {
+  // 检查缓存
+  const cacheKey = text.substring(0, 200); // 用前200字符作为key
+  if (embeddingCache.has(cacheKey)) {
+    return embeddingCache.get(cacheKey)!;
+  }
+  
   const pipe = await getExtractor();
   
   if (!pipe) {
@@ -57,7 +77,18 @@ async function generateEmbedding(text: string): Promise<number[]> {
   
   try {
     const output = await pipe(text, { pooling: 'mean', normalize: true });
-    return Array.from(output.data as Float32Array);
+    const embedding = Array.from(output.data as Float32Array);
+    
+    // 存入缓存
+    if (embeddingCache.size >= CACHE_MAX_SIZE) {
+      const firstKey = embeddingCache.keys().next().value;
+      if (firstKey) {
+        embeddingCache.delete(firstKey);
+      }
+    }
+    embeddingCache.set(cacheKey, embedding);
+    
+    return embedding;
   } catch (error) {
     console.error('[Context-Pod] Embedding generation failed:', error);
     return new Array(EMBEDDING_DIMENSION).fill(0);
@@ -69,6 +100,11 @@ export async function initMemoryService(): Promise<void> {
   await getDatabase();
   isInitialized = true;
   console.log('[Context-Pod] Memory service initialized');
+  
+  // 后台静默预加载 Embedding 模型
+  setTimeout(() => {
+    preloadExtractor();
+  }, 1000);
 }
 
 export async function addMemory(contact: Contact): Promise<string> {
@@ -84,32 +120,38 @@ export async function addMemory(contact: Contact): Promise<string> {
   return id;
 }
 
-export async function retrieveMemory(queryText: string, limit: number = 3): Promise<string> {
-  const db = await getDatabase();
-  const queryVector = await generateEmbedding(queryText);
+// 快速内存索引 - 用于快速路径查找（不依赖向量模型）
+const contactNameIndex = new Map<string, string>();
 
-  try {
-    const results = await search(db, {
-      mode: 'vector',
-      vector: {
-        value: queryVector,
-        property: 'embedding',
-      },
-      limit,
-      similarity: 0.3,
-    });
-
-    if (results.hits.length === 0) return '暂无此人记录';
-
-    return results.hits
-      .map((hit: any) => {
-        const doc = hit.document;
-        return `【${doc.contactName}】性格特点：${doc.personality}`;
-      })
-      .join('\n');
-  } catch {
-    return '暂无此人记录';
+export async function retrieveMemory(queryText: string, _limit: number = 3): Promise<string> {
+  // 首先尝试精确的快速路径查找（完全不依赖向量搜索）
+  const exactMatch = contactNameIndex.get(queryText);
+  if (exactMatch) {
+    console.log('[Context-Pod] ⚡ Fast path: Exact name match found');
+    return exactMatch;
   }
+  
+  // 尝试部分匹配（也不依赖向量搜索）
+  for (const [name, personality] of contactNameIndex) {
+    if (queryText.includes(name) || name.includes(queryText)) {
+      console.log('[Context-Pod] ⚡ Fast path: Partial name match found');
+      return personality;
+    }
+  }
+  
+  // 如果快速查找没找到，直接返回默认值（不尝试向量搜索，避免报错）
+  console.log('[Context-Pod] ⚡ Fast path: No match found, using fallback');
+  return '暂无此人记录';
+}
+
+// 更新快速索引
+export function updateContactIndex(contacts: Contact[]) {
+  contactNameIndex.clear();
+  for (const contact of contacts) {
+    const personalityText = `【${contact.name}】性格特点：${contact.personality}`;
+    contactNameIndex.set(contact.name, personalityText);
+  }
+  console.log(`[Context-Pod] Fast index updated with ${contacts.length} contacts`);
 }
 
 export async function searchContacts(query: string): Promise<ContactEmbedding[]> {

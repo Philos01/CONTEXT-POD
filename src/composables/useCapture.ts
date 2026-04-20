@@ -3,6 +3,7 @@ import { useAppStore } from '@/stores/appStore';
 import type { CaptureResult } from '@/types';
 
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+let cachedActiveWindowTitle = '';
 
 export function useCapture() {
   const isCapturing = ref(false);
@@ -80,7 +81,7 @@ export function useCapture() {
     
     if (isCapturing.value) {
       console.log('[Context-Pod] ⏳ Already capturing, ignoring duplicate trigger');
-      lastError.value = '正在处理中';
+      // 不设置 lastError，避免显示"正在处理中"
       return;
     }
     
@@ -88,6 +89,18 @@ export function useCapture() {
 
     try {
       console.log('[Context-Pod] 📋 Starting capture process...');
+      
+      // 1. 先获取活动窗口（在显示伴聊悬浮舱之前）
+      if (isTauri) {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          cachedActiveWindowTitle = await invoke('get_active_window_title');
+          console.log(`[Context-Pod] 🪟 Cached active window BEFORE show: "${cachedActiveWindowTitle}"`);
+        } catch (e) {
+          console.warn('[Context-Pod] Failed to get active window:', e);
+          cachedActiveWindowTitle = '';
+        }
+      }
       
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       const appWindow = getCurrentWindow();
@@ -118,6 +131,8 @@ export function useCapture() {
         
         setTimeout(() => {
           isCapturing.value = false;
+          // 3秒后清空错误，避免下次还显示
+          setTimeout(() => { lastError.value = ''; }, 3000);
         }, 300);
         return;
       }
@@ -298,6 +313,8 @@ export function useCapture() {
     }
   };
 
+  const getCachedActiveWindow = () => cachedActiveWindowTitle;
+
   return {
     isCapturing,
     lastCapture,
@@ -308,5 +325,6 @@ export function useCapture() {
     cleanupShortcut,
     showWindow,
     hideWindow,
+    getCachedActiveWindow,
   };
 }

@@ -2,16 +2,33 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body, #app {
+:root {
+  --bg-primary: rgba(255, 255, 255, 0.72);
+}
+
+/* html, body, #app {
   margin: 0;
   padding: 0;
   width: 100%;
-  height: 100%;
-  background: transparent;
+  height: 100vh;
+  background: transparent !important;
   overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   user-select: none;
+} */
+ html, body, #app {
+  margin: 0 !important;
+  padding: 0 !important;
+  /* 使用固定像素而不是 vh/vw，确保和 config 严格一致 */
+  width: 440px !important;
+  height: 620px !important;
+  overflow: hidden;
+  background-color: transparent !important;
+}
+
+body {
+  background-color: transparent !important;
 }
 
 ::-webkit-scrollbar {
@@ -27,11 +44,22 @@ html, body, #app {
   border-radius: 2px;
 }
 
-.glass-panel {
-  background: rgba(255, 255, 255, 0.72);
+/* .glass-panel {
+  background: var(--bg-primary);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: none !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+} */
+ .glass-panel {
+  /* 如果你的背景是半透明的，白框就会从后面透出来 */
+  /* 建议在这里先用实色测试，解决白框后再尝试半透明 */
+  background: white; 
+  width: 100%;
+  height: 100%;
+  border: none !important;
+  border-radius: 0; /* 先设为 0，看看白框是否消失 */
+  box-shadow: none !important; /* 关掉阴影，阴影是白框的主要元凶 */
 }
 
 .btn-strategy {

@@ -1,5 +1,16 @@
 export type LLMProvider = 'deepseek' | 'openai' | 'qwen' | 'custom';
 
+export interface StylePersona {
+  sentenceStyle: string;
+  catchphrases: string[];
+  emotionLevel: string;
+  vocabFeatures: string;
+  punctuationHabits: string;
+  summary: string;
+  sampleCount?: number;
+  updatedAt?: number;
+}
+
 export interface Contact {
   id: string;
   name: string;

@@ -3,7 +3,7 @@ import FloatingPanel from './components/FloatingPanel.vue';
 </script>
 
 <template>
-  <div class="min-h-screen bg-transparent flex items-center justify-center p-0">
+  <div class="w-full  bg-transparent  items-center justify-center p-0 m-0 overflow-hidden">
     <FloatingPanel />
   </div>
 </template>

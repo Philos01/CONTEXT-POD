@@ -1,7 +1,9 @@
 import { defineStore } from 'pinia';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import type { Contact } from '@/types';
-import { addMemory, initMemoryService } from '@/services/memoryService';
+import { addMemory, initMemoryService, updateContactIndex } from '@/services/memoryService';
+import { renamePersona } from '@/services/personaService';
+import { renameBufferEntries } from '@/services/evolutionEngine';
 
 const CONTACTS_KEY = 'context-pod-contacts';
 
@@ -20,6 +22,11 @@ export const useContactStore = defineStore('contacts', () => {
   const isDbReady = ref(false);
 
   const contactCount = computed(() => contacts.value.length);
+
+  // 监听联系人变化，自动更新快速索引
+  watch(contacts, (newContacts) => {
+    updateContactIndex(newContacts);
+  }, { immediate: true, deep: true });
 
   async function initDb() {
     if (isDbReady.value) return;
@@ -75,10 +82,18 @@ export const useContactStore = defineStore('contacts', () => {
   }
 
   function updateContact(id: string, updates: Partial<Contact>) {
-    const idx = contacts.value.findIndex((c) => c.id !== id);
+    const idx = contacts.value.findIndex((c) => c.id === id);
     if (idx >= 0) {
+      const oldContact = contacts.value[idx];
+      
+      // 如果名字有变化，同步更新风格画像和缓冲区
+      if (updates.name && updates.name !== oldContact.name) {
+        renamePersona(oldContact.name, updates.name);
+        renameBufferEntries(oldContact.name, updates.name);
+      }
+      
       contacts.value[idx] = {
-        ...contacts.value[idx],
+        ...oldContact,
         ...updates,
         updatedAt: Date.now(),
       };
