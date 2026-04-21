@@ -10,7 +10,9 @@ import {
   deleteBufferEntry,
   type ChatBufferEntry,
 } from '@/services/evolutionEngine';
-import { getDynamicPersona, saveDynamicPersona, type DynamicPersonaSchema } from '@/services/personaService';
+import { getDynamicPersona, saveDynamicPersona } from '@/services/personaService';
+import type { DynamicPersonaSchema } from '@/types';
+import { alertService } from '@/services/alertService';
 
 const contactStore = useContactStore();
 const appStore = useAppStore();
@@ -147,7 +149,7 @@ function hasPersonaData(contactName: string): boolean {
 
 async function updatePersonality(contactName: string) {
   if (!appStore.isConfigured) {
-    alert('请先在设置中配置 API Key');
+    alertService.warning('请先在设置中配置 API Key');
     return;
   }
 
@@ -157,14 +159,15 @@ async function updatePersonality(contactName: string) {
     const result = await triggerPersonaUpdate(contactName, appStore.settings, true);
     
     if (result.success) {
-      alert(`✅ 风格更新成功！\n\n已处理 ${result.processedCount} 条对话记录。\n\n${result.dynamicPersona?.summary || ''}`);
+      // 显示简洁的成功提示
+      alertService.success(`风格更新成功！\n已处理 ${result.processedCount} 条对话记录。`);
       loadBufferForContact(contactName);
     } else {
       const bufferCount = getBufferByContact(contactName).length;
-      alert(`⚠️ 更新条件不足\n\n需要至少 1 条对话记录，当前有 ${bufferCount} 条。\n\n请先在主界面使用"添加自己的回复"功能来积累对话。`);
+      alertService.warning(`更新条件不足\n需要至少 1 条对话记录，当前有 ${bufferCount} 条。`);
     }
   } catch (error) {
-    alert(`❌ 更新失败: ${error}`);
+    alertService.error(`更新失败: ${error}`);
   } finally {
     isUpdatingPersona.value = null;
   }
@@ -181,7 +184,7 @@ function clearContactBuffer(contactName: string) {
   }
   
   loadBufferForContact(contactName);
-  alert('对话缓存已清除');
+  alertService.success('对话缓存已清除');
 }
 
 function getPendingCount(contactName: string): number {
@@ -195,7 +198,7 @@ function startEditPersona(contactName: string) {
     editingPersonaData.value = {
       targetId: contactName,
       updateTick: 0,
-      powerIdentity: [{ trait: '待补充', confidence: 0.5 }],
+      powerIdentity: [{ trait: '待补充', confidence: 0.5, observationsCount: 0, decayRate: 0 }],
       psychologicalNeeds: [{ need: '待补充', weight: 0.5 }],
       taboos: [{ rule: '待补充', riskFactor: 0.5 }],
       temperature: 5,
@@ -229,7 +232,7 @@ function addPersonaTrait(type: 'powerIdentity' | 'psychologicalNeeds' | 'taboos'
   if (!editingPersonaData.value) return;
   
   if (type === 'powerIdentity') {
-    editingPersonaData.value.powerIdentity.push({ trait: '', confidence: 0.5 });
+    editingPersonaData.value.powerIdentity.push({ trait: '', confidence: 0.5, observationsCount: 0, decayRate: 0 });
   } else if (type === 'psychologicalNeeds') {
     editingPersonaData.value.psychologicalNeeds.push({ need: '', weight: 0.5 });
   } else {

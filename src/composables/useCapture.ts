@@ -1,6 +1,7 @@
 import { ref, watch } from 'vue';
 import { useAppStore } from '@/stores/appStore';
 import type { CaptureResult } from '@/types';
+import { alertService } from '@/services/alertService';
 
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 let cachedActiveWindowTitle = '';
@@ -289,7 +290,7 @@ export function useCapture() {
       moduleIsRegistered.value = false;
       moduleLastError.value = `快捷键注册失败: ${error}`;
 
-      alert(`⚠️ 快捷键注册失败！\n\n错误信息: ${error}\n\n可能的原因:\n1. 该快捷键被其他程序占用\n2. 系统权限不足\n3. Tauri 插件未正确安装\n\n请尝试:\n- 更换其他快捷键（如 F10、F11）\n- 以管理员身份运行应用\n- 检查控制台详细日志`);
+      alertService.warning(`⚠️ 快捷键注册失败！\n\n错误信息: ${error}\n\n可能的原因:\n1. 该快捷键被其他程序占用\n2. 系统权限不足\n3. Tauri 插件未正确安装\n\n请尝试:\n- 更换其他快捷键（如 F10、F11）\n- 以管理员身份运行应用\n- 检查控制台详细日志`);
     }
   };
 

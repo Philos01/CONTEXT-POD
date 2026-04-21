@@ -8,6 +8,7 @@ import {
   deletePrompt,
   type PromptTemplate
 } from '@/services/promptService';
+import { alertService } from '@/services/alertService';
 
 const prompts = ref<PromptTemplate[]>([]);
 const selectedId = ref<string | null>(null);
@@ -72,7 +73,7 @@ function saveEdit() {
   
   prompts.value = loadPrompts();
   
-  alert('提示词已保存！修改将立即生效。');
+  alertService.success('提示词已保存！修改将立即生效。');
 }
 
 function resetToDefault() {
@@ -83,7 +84,7 @@ function resetToDefault() {
     prompts.value = loadPrompts();
     selectPrompt(selectedId.value!);
     
-    alert('已重置为默认提示词。');
+    alertService.success('已重置为默认提示词。');
   }
 }
 

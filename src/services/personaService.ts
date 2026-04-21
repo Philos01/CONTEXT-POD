@@ -386,28 +386,30 @@ function mergePowerIdentity(
   const merged = [...existing];
 
   for (const newTrait of updated) {
+    if (!newTrait.trait || !newTrait.trait.trim()) continue;
+
     const existingIdx = merged.findIndex(
-      e => e.trait === newTrait.trait || similarity(e.trait, newTrait.trait) > 0.6
+      e => e.trait === newTrait.trait || similarity(e.trait, newTrait.trait) > 0.75
     );
 
     if (existingIdx >= 0) {
       const existingTrait = merged[existingIdx];
       merged[existingIdx] = {
-        trait: newTrait.trait || existingTrait.trait,
-        confidence: Math.min(1, existingTrait.confidence + 0.1),
+        trait: existingTrait.trait,
+        confidence: Math.min(1, existingTrait.confidence + 0.05),
         observationsCount: existingTrait.observationsCount + 1,
-        decayRate: existingTrait.decayRate * 0.9,
+        decayRate: existingTrait.decayRate * 0.95,
       };
     } else {
       merged.push({
         ...newTrait,
         observationsCount: 1,
-        decayRate: 0.1,
+        decayRate: 0.05,
       });
     }
   }
 
-  return merged.sort((a, b) => b.confidence - a.confidence).slice(0, 10);
+  return merged.sort((a, b) => b.confidence - a.confidence).slice(0, 8);
 }
 
 function mergePsychologicalNeeds(
@@ -417,42 +419,46 @@ function mergePsychologicalNeeds(
   const merged = [...existing];
 
   for (const newNeed of updated) {
+    if (!newNeed.need || !newNeed.need.trim()) continue;
+
     const existingIdx = merged.findIndex(
-      e => e.need === newNeed.need || similarity(e.need, newNeed.need) > 0.6
+      e => e.need === newNeed.need || similarity(e.need, newNeed.need) > 0.75
     );
 
     if (existingIdx >= 0) {
       merged[existingIdx] = {
-        need: newNeed.need || merged[existingIdx].need,
-        weight: Math.min(1, merged[existingIdx].weight * 0.7 + newNeed.weight * 0.3),
+        need: merged[existingIdx].need,
+        weight: Math.min(1, merged[existingIdx].weight * 0.8 + newNeed.weight * 0.2),
       };
     } else {
       merged.push({ ...newNeed });
     }
   }
 
-  return merged.sort((a, b) => b.weight - a.weight).slice(0, 8);
+  return merged.sort((a, b) => b.weight - a.weight).slice(0, 6);
 }
 
 function mergeTaboos(existing: TabooRule[], updated: TabooRule[]): TabooRule[] {
   const merged = [...existing];
 
   for (const newTaboo of updated) {
+    if (!newTaboo.rule || !newTaboo.rule.trim()) continue;
+
     const existingIdx = merged.findIndex(
-      e => e.rule === newTaboo.rule || similarity(e.rule, newTaboo.rule) > 0.6
+      e => e.rule === newTaboo.rule || similarity(e.rule, newTaboo.rule) > 0.75
     );
 
     if (existingIdx >= 0) {
       merged[existingIdx] = {
-        rule: newTaboo.rule || merged[existingIdx].rule,
-        riskFactor: Math.max(merged[existingIdx].riskFactor, newTaboo.riskFactor),
+        rule: merged[existingIdx].rule,
+        riskFactor: Math.max(merged[existingIdx].riskFactor, newTaboo.riskFactor * 0.9),
       };
     } else {
       merged.push({ ...newTaboo });
     }
   }
 
-  return merged.sort((a, b) => b.riskFactor - a.riskFactor).slice(0, 8);
+  return merged.sort((a, b) => b.riskFactor - a.riskFactor).slice(0, 6);
 }
 
 function similarity(a: string, b: string): number {

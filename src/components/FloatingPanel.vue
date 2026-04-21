@@ -23,9 +23,11 @@ import PromptManager from './PromptManager.vue';
 import LogViewer from './LogViewer.vue';
 import EvolutionTest from './EvolutionTest.vue';
 import DiagnosticTest from './DiagnosticTest.vue';
+import CustomAlert from './CustomAlert.vue';
 import type { ReplyStrategy, AgentState, TacticalGoal } from '@/types';
 import { CONVERSATION_PHASE_LABELS, TACTICAL_GOAL_LABELS } from '@/types';
 import { getPhaseStrategyHint } from '@/services/conversationStateEngine';
+import { alertService } from '@/services/alertService';
 
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -47,19 +49,18 @@ const selectedTacticalGoal = ref<TacticalGoal>('stabilize');
 const lastSelectedStrategy = ref<string>('');
 const historyCount = computed(() => getHistory().length);
 const personaCount = computed(() => {
-  const personas = localStorage.getItem('context-pod-personas');
   const dynamicPersonas = localStorage.getItem('context-pod-dynamic-personas');
   const contactNames = contactStore.contacts.map(c => c.name);
   let count = 0;
   
-  if (personas) {
-    const personaData = JSON.parse(personas);
-    count += Object.keys(personaData).filter(name => contactNames.includes(name)).length;
-  }
-  
   if (dynamicPersonas) {
     const dynamicPersonaData = JSON.parse(dynamicPersonas);
-    count += Object.keys(dynamicPersonaData).filter(name => contactNames.includes(name)).length;
+    const personaKeys = Object.keys(dynamicPersonaData);
+    // 计算所有有效的动态人物画像（包括"自我"和联系人）
+    count = personaKeys.filter(name => {
+      // 包含"自我"风格和所有联系人
+      return name === '自我' || contactNames.includes(name);
+    }).length;
   }
   
   return count;
@@ -217,7 +218,7 @@ async function injectToChat(selectedReply: string) {
       }, 100);
     } else {
       await navigator.clipboard.writeText(selectedReply);
-      alert('已复制到剪贴板！\n\n' + selectedReply);
+      alertService.success('已复制到剪贴板！\n\n' + selectedReply);
     }
     
     resetToIdle();
@@ -274,13 +275,13 @@ function saveCustomReply(_modelReply: string) {
     const combinedText = `${rawContext.value}\n我: ${customReplyText.value}`;
     saveUserReply(combinedText, contactName, customReplyText.value);
     
-    alert('回复已保存！当积累足够数据后，系统会在闲时自动学习您的风格。');
+    alertService.success('回复已保存！当积累足够数据后，系统会在闲时自动学习您的风格。');
     
     customReplyText.value = '';
     showCustomReply.value = false;
   } catch (error) {
     console.error('[Context-Pod] Save failed:', error);
-    alert('保存失败，请稍后重试');
+    alertService.error('保存失败，请稍后重试');
   } finally {
     isSavingReply.value = false;
   }
@@ -793,5 +794,16 @@ function goBack() {
     <div v-if="activeTab === 'diagnostic-test'" class="flex-1 flex flex-col overflow-auto">
       <DiagnosticTest @back="goBack" />
     </div>
+
+    <!-- 自定义提示框 -->
+    <CustomAlert
+      :show="alertService.isVisibleRef.value"
+      :message="alertService.options.message"
+      :title="alertService.options.title"
+      :type="alertService.options.type"
+      :confirm-text="alertService.options.confirmText"
+      @close="alertService.close()"
+      @confirm="alertService.confirm()"
+    />
   </div>
 </template>

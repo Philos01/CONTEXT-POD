@@ -2,7 +2,9 @@
 import { ref, computed, onMounted } from 'vue';
 import { useAppStore } from '@/stores/appStore';
 import { saveDynamicPersona, getDynamicPersona } from '@/services/personaService';
+import { triggerPersonaUpdate, getBufferByContact, deleteBufferEntry, type ChatBufferEntry } from '@/services/evolutionEngine';
 import type { DynamicPersonaSchema, ExperienceEvent } from '@/types';
+import { alertService } from '@/services/alertService';
 
 const emit = defineEmits<{
   back: [];
@@ -26,6 +28,13 @@ const error = ref('');
 const showRadarAnimation = ref(false);
 const radarLevel = ref(0);
 const decodingMessage = ref('');
+
+// 新增：自身风格的缓存管理
+const selfBuffer = ref<ChatBufferEntry[]>([]);
+const bufferExpanded = ref(false);
+const isUpdatingSelfPersona = ref(false);
+const isEditingSelfPersona = ref(false);
+const editingSelfPersonaData = ref<DynamicPersonaSchema | null>(null);
 
 const domains = [
   {
@@ -450,12 +459,128 @@ function goBack() {
   emit('back');
 }
 
+// 新增：自身风格管理功能
+function loadSelfBuffer() {
+  selfBuffer.value = getBufferByContact('自我');
+}
+
+function toggleBufferExpand() {
+  bufferExpanded.value = !bufferExpanded.value;
+  if (bufferExpanded.value) {
+    loadSelfBuffer();
+  }
+}
+
+function clearSelfBuffer() {
+  const buffer = getBufferByContact('自我');
+  const ids = buffer.map(e => e.id);
+  
+  for (const id of ids) {
+    deleteBufferEntry(id);
+  }
+  
+  loadSelfBuffer();
+  alertService.success('缓存已清除');
+}
+
+function startEditSelfPersona() {
+  const persona = getDynamicPersona('自我');
+  if (!persona) {
+    editingSelfPersonaData.value = {
+      targetId: '自我',
+      updateTick: 0,
+      powerIdentity: [{ trait: '待补充', confidence: 0.5, observationsCount: 0, decayRate: 0 }],
+      psychologicalNeeds: [{ need: '待补充', weight: 0.5 }],
+      taboos: [{ rule: '待补充', riskFactor: 0.5 }],
+      temperature: 5,
+      textStyle: '待补充',
+      experienceEvents: [],
+      summary: '待补充',
+      sampleCount: 0,
+      updatedAt: Date.now(),
+    };
+  } else {
+    editingSelfPersonaData.value = JSON.parse(JSON.stringify(persona));
+  }
+  isEditingSelfPersona.value = true;
+}
+
+function cancelEditSelfPersona() {
+  isEditingSelfPersona.value = false;
+  editingSelfPersonaData.value = null;
+}
+
+function saveSelfPersonaEdit() {
+  if (!editingSelfPersonaData.value) return;
+  
+  editingSelfPersonaData.value.updatedAt = Date.now();
+  saveDynamicPersona('自我', editingSelfPersonaData.value);
+  isEditingSelfPersona.value = false;
+  editingSelfPersonaData.value = null;
+  const existing = getDynamicPersona('自我');
+  if (existing) {
+    editingPersona.value = existing;
+  }
+}
+
+async function updateSelfPersona() {
+  if (!appStore.isConfigured) {
+    alertService.warning('请先配置API密钥');
+    return;
+  }
+  
+  isUpdatingSelfPersona.value = true;
+  
+  try {
+    const result = await triggerPersonaUpdate('自我', appStore.settings, true);
+    if (result.success) {
+      alertService.success('自身风格画像已更新');
+      const existing = getDynamicPersona('自我');
+      if (existing) {
+        editingPersona.value = existing;
+      }
+      loadSelfBuffer();
+    } else {
+      alertService.warning('更新失败，请检查API配置');
+    }
+  } catch (error) {
+    alertService.error('更新失败：' + (error as Error).message);
+  } finally {
+    isUpdatingSelfPersona.value = false;
+  }
+}
+
+function addSelfPersonaTrait(type: 'powerIdentity' | 'psychologicalNeeds' | 'taboos') {
+  if (!editingSelfPersonaData.value) return;
+  
+  if (type === 'powerIdentity') {
+    editingSelfPersonaData.value.powerIdentity.push({ trait: '', confidence: 0.5, observationsCount: 0, decayRate: 0 });
+  } else if (type === 'psychologicalNeeds') {
+    editingSelfPersonaData.value.psychologicalNeeds.push({ need: '', weight: 0.5 });
+  } else {
+    editingSelfPersonaData.value.taboos.push({ rule: '', riskFactor: 0.5 });
+  }
+}
+
+function removeSelfPersonaTrait(type: 'powerIdentity' | 'psychologicalNeeds' | 'taboos', index: number) {
+  if (!editingSelfPersonaData.value) return;
+  
+  if (type === 'powerIdentity') {
+    editingSelfPersonaData.value.powerIdentity.splice(index, 1);
+  } else if (type === 'psychologicalNeeds') {
+    editingSelfPersonaData.value.psychologicalNeeds.splice(index, 1);
+  } else {
+    editingSelfPersonaData.value.taboos.splice(index, 1);
+  }
+}
+
 onMounted(() => {
   const existing = getDynamicPersona('自我');
   if (existing && existing.powerIdentity && existing.powerIdentity.length > 0) {
     hasExistingPersona.value = true;
     editingPersona.value = existing;
   }
+  loadSelfBuffer();
 });
 </script>
 
@@ -481,9 +606,85 @@ onMounted(() => {
         <h3 class="text-lg font-bold mb-2" style="color: var(--text-primary);">全场景数字分身冷启动</h3>
         <p class="text-sm mb-4" style="color: var(--text-tertiary);">通过5-8道"地狱级高压社交实境问答"<br/>在不经意间克隆你的社交DNA</p>
         
-        <div v-if="hasExistingPersona" class="p-3 rounded-xl mb-4 text-left" style="background: rgba(139, 115, 85, 0.06); border: 1px solid rgba(139, 115, 85, 0.1);">
-          <p class="text-xs font-medium mb-1" style="color: var(--accent-warm);">已完成的测试</p>
+        <div v-if="hasExistingPersona" class="p-4 rounded-xl mb-6 space-y-4" style="background: rgba(139, 115, 85, 0.06); border: 1px solid rgba(139, 115, 85, 0.1);">
+          <div class="flex items-center justify-between">
+            <p class="text-xs font-medium" style="color: var(--accent-warm);">自身风格画像</p>
+            <div class="flex gap-2">
+              <button
+                @click="startEditSelfPersona"
+                class="btn-secondary text-xs px-3 py-1.5"
+              >
+                <svg class="w-3 h-3 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                编辑
+              </button>
+              <button
+                @click="updateSelfPersona"
+                :disabled="isUpdatingSelfPersona"
+                class="btn-secondary text-xs px-3 py-1.5"
+              >
+                <svg v-if="isUpdatingSelfPersona" class="w-3 h-3 animate-spin inline-block mr-1" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                {{ isUpdatingSelfPersona ? '更新中...' : '更新画像' }}
+              </button>
+            </div>
+          </div>
           <p class="text-sm" style="color: var(--text-secondary);">{{ editingPersona?.summary }}</p>
+          
+          <!-- 对话缓存 -->
+          <div class="pt-3" style="border-top: 1px solid rgba(139, 115, 85, 0.1);">
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2">
+                <svg class="w-3.5 h-3.5" style="color: var(--accent-warm);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+                <span class="text-xs font-medium" style="color: var(--text-secondary);">对话缓存</span>
+                <span v-if="selfBuffer.length > 0" class="text-xs px-2 py-0.5 rounded-full" style="background: rgba(139, 115, 85, 0.12); color: var(--accent-warm);">
+                  {{ selfBuffer.length }}条
+                </span>
+              </div>
+              <div class="flex gap-2">
+                <button
+                  v-if="selfBuffer.length > 0"
+                  @click="toggleBufferExpand"
+                  class="text-xs"
+                  style="color: var(--text-tertiary);"
+                >
+                  {{ bufferExpanded ? '收起' : '展开' }}
+                </button>
+                <button
+                  v-if="selfBuffer.length > 0"
+                  @click="clearSelfBuffer"
+                  class="text-xs"
+                  style="color: #dc2626;"
+                >
+                  清除
+                </button>
+              </div>
+            </div>
+            
+            <div v-if="bufferExpanded && selfBuffer.length > 0" class="mt-2 space-y-2">
+              <div
+                v-for="entry in selfBuffer"
+                :key="entry.id"
+                class="p-2 rounded-lg text-xs"
+                :style="entry.role === 'partner' ? 'background: rgba(139, 115, 85, 0.04);' : 'background: rgba(99, 102, 241, 0.04);'"
+              >
+                <div class="flex items-start gap-2">
+                  <span class="text-[9px] font-medium" :style="entry.role === 'partner' ? 'color: var(--accent-warm);' : 'color: #6366f1;'">
+                    {{ entry.role === 'partner' ? '对方' : '我' }}
+                  </span>
+                  <span class="flex-1">{{ entry.content }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-else-if="bufferExpanded && selfBuffer.length === 0" class="text-xs text-center py-3" style="color: var(--text-tertiary);">
+              暂无对话缓存
+            </div>
+          </div>
         </div>
         
         <button
@@ -495,6 +696,243 @@ onMounted(() => {
           </svg>
           {{ hasExistingPersona ? '重新测试' : '开始捏脸' }}
         </button>
+      </div>
+      
+      <!-- 自身风格编辑界面 -->
+      <div v-if="isEditingSelfPersona && editingSelfPersonaData" class="p-4 rounded-xl space-y-4" style="background: rgba(139, 115, 85, 0.04); border: 1px solid rgba(139, 115, 85, 0.1);">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-xs font-medium" style="color: var(--accent-warm);">编辑自身风格画像</p>
+          <button
+            @click="cancelEditSelfPersona"
+            class="text-xs"
+            style="color: var(--text-tertiary);"
+          >
+            取消
+          </button>
+        </div>
+        
+        <div>
+          <p class="text-[10px] font-medium mb-2 flex items-center gap-1.5" style="color: var(--accent-warm);">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            权力身份特征
+          </p>
+          <div class="space-y-2">
+            <div
+              v-for="(trait, idx) in editingSelfPersonaData.powerIdentity"
+              :key="idx"
+              class="p-3 rounded-xl space-y-2"
+              style="background: white; border: 1px solid var(--border-light);"
+            >
+              <div class="flex items-center justify-between">
+                <span class="text-[10px] font-medium" style="color: var(--text-tertiary);">特征 #{{ idx + 1 }}</span>
+                <button
+                  @click="removeSelfPersonaTrait('powerIdentity', idx)"
+                  class="text-red-400 hover:text-red-600 p-1 transition-colors"
+                  title="删除"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <input
+                v-model="trait.trait"
+                type="text"
+                placeholder="输入特征描述，如：社交能量等级：高能量人格"
+                class="input-field text-xs"
+              />
+              <div class="flex items-center gap-3">
+                <span class="text-[10px]" style="color: var(--text-tertiary);">置信度</span>
+                <input
+                  v-model.number="trait.confidence"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  class="flex-1"
+                />
+                <span class="text-xs font-medium" style="color: var(--text-primary); min-width: 32px; text-align: right;">{{ (trait.confidence * 100).toFixed(0) }}%</span>
+              </div>
+            </div>
+            <button
+              @click="addSelfPersonaTrait('powerIdentity')"
+              class="w-full py-2 text-xs rounded-xl border border-dashed transition-colors"
+              style="border-color: var(--border-light); color: var(--accent-warm);"
+            >
+              <svg class="w-3.5 h-3.5 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+              添加特征
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <p class="text-[10px] font-medium mb-2 flex items-center gap-1.5" style="color: var(--accent-warm);">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+            </svg>
+            核心诉求
+          </p>
+          <div class="space-y-2">
+            <div
+              v-for="(need, idx) in editingSelfPersonaData.psychologicalNeeds"
+              :key="idx"
+              class="p-3 rounded-xl space-y-2"
+              style="background: white; border: 1px solid var(--border-light);"
+            >
+              <div class="flex items-center justify-between">
+                <span class="text-[10px] font-medium" style="color: var(--text-tertiary);">诉求 #{{ idx + 1 }}</span>
+                <button
+                  @click="removeSelfPersonaTrait('psychologicalNeeds', idx)"
+                  class="text-red-400 hover:text-red-600 p-1 transition-colors"
+                  title="删除"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <input
+                v-model="need.need"
+                type="text"
+                placeholder="输入诉求描述，如：在不同场景下需要不同的应对策略"
+                class="input-field text-xs"
+              />
+              <div class="flex items-center gap-3">
+                <span class="text-[10px]" style="color: var(--text-tertiary);">权重</span>
+                <input
+                  v-model.number="need.weight"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  class="flex-1"
+                />
+                <span class="text-xs font-medium" style="color: var(--text-primary); min-width: 32px; text-align: right;">{{ (need.weight * 100).toFixed(0) }}%</span>
+              </div>
+            </div>
+            <button
+              @click="addSelfPersonaTrait('psychologicalNeeds')"
+              class="w-full py-2 text-xs rounded-xl border border-dashed transition-colors"
+              style="border-color: var(--border-light); color: var(--accent-warm);"
+            >
+              <svg class="w-3.5 h-3.5 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+              添加诉求
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <p class="text-[10px] font-medium mb-2 flex items-center gap-1.5" style="color: #dc2626;">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+            沟通禁区
+          </p>
+          <div class="space-y-2">
+            <div
+              v-for="(taboo, idx) in editingSelfPersonaData.taboos"
+              :key="idx"
+              class="p-3 rounded-xl space-y-2"
+              style="background: white; border: 1px solid rgba(220, 38, 38, 0.15);"
+            >
+              <div class="flex items-center justify-between">
+                <span class="text-[10px] font-medium" style="color: var(--text-tertiary);">禁区 #{{ idx + 1 }}</span>
+                <button
+                  @click="removeSelfPersonaTrait('taboos', idx)"
+                  class="text-red-400 hover:text-red-600 p-1 transition-colors"
+                  title="删除"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <input
+                v-model="taboo.rule"
+                type="text"
+                placeholder="输入禁区规则，如：严禁冷暴力和突然消失"
+                class="input-field text-xs"
+              />
+              <div class="flex items-center gap-3">
+                <span class="text-[10px]" style="color: var(--text-tertiary);">风险等级</span>
+                <input
+                  v-model.number="taboo.riskFactor"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  class="flex-1"
+                />
+                <span class="text-xs font-medium" style="color: #dc2626; min-width: 32px; text-align: right;">{{ (taboo.riskFactor * 100).toFixed(0) }}%</span>
+              </div>
+            </div>
+            <button
+              @click="addSelfPersonaTrait('taboos')"
+              class="w-full py-2 text-xs rounded-xl border border-dashed transition-colors"
+              style="border-color: rgba(220, 38, 38, 0.2); color: #dc2626;"
+            >
+              <svg class="w-3.5 h-3.5 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+              添加禁区
+            </button>
+          </div>
+        </div>
+
+        <div class="pt-2" style="border-top: 1px solid var(--border-light);">
+          <p class="text-[10px] font-medium mb-2" style="color: var(--accent-warm);">情绪热度</p>
+          <div class="p-3 rounded-xl" style="background: white; border: 1px solid var(--border-light);">
+            <div class="flex items-center gap-3">
+              <span class="text-[10px]" style="color: var(--text-tertiary);">冷静</span>
+              <input
+                v-model.number="editingSelfPersonaData.temperature"
+                type="range"
+                min="0"
+                max="10"
+                step="1"
+                class="flex-1"
+              />
+              <span class="text-[10px]" style="color: var(--text-tertiary);">激烈</span>
+              <span class="text-sm font-medium ml-2" style="color: var(--text-primary);">{{ editingSelfPersonaData.temperature }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <p class="text-[10px] font-medium mb-2" style="color: var(--accent-warm);">文本风格</p>
+          <textarea
+            v-model="editingSelfPersonaData.textStyle"
+            placeholder="描述你的文本风格特征，如：综合热度5/10，攻击性3/10"
+            class="input-field resize-none text-xs"
+            rows="2"
+          ></textarea>
+        </div>
+
+        <div>
+          <p class="text-[10px] font-medium mb-2" style="color: var(--accent-warm);">综合总结</p>
+          <textarea
+            v-model="editingSelfPersonaData.summary"
+            placeholder="总结你的性格特征和沟通模式，如：太极推手 | 亲密度:6 血缘:4 友谊:7 冲突:3"
+            class="input-field resize-none text-xs"
+            rows="3"
+          ></textarea>
+        </div>
+
+        <div class="flex gap-2 pt-2" style="border-top: 1px solid var(--border-light);">
+          <button @click="cancelEditSelfPersona" class="btn-secondary flex-1">取消</button>
+          <button @click="saveSelfPersonaEdit" class="btn-primary flex-1">
+            <svg class="w-3.5 h-3.5 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+            保存修改
+          </button>
+        </div>
       </div>
       
       <div class="text-center">
