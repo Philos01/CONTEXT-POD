@@ -95,7 +95,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-4 bg-gray-50 rounded-lg max-w-2xl mx-auto">
+  <div class="px-5 py-4 bg-gray-50">
     <h2 class="text-lg font-bold text-gray-800 mb-4">🧬 用户画像进化测试工具</h2>
     
     <div class="space-y-4">

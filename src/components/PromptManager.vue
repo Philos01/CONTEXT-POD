@@ -9,10 +9,6 @@ import {
   type PromptTemplate
 } from '@/services/promptService';
 
-const emit = defineEmits<{
-  back: [];
-}>();
-
 const prompts = ref<PromptTemplate[]>([]);
 const selectedId = ref<string | null>(null);
 const editingContent = ref('');
@@ -76,7 +72,7 @@ function saveEdit() {
   
   prompts.value = loadPrompts();
   
-  alert('✅ 提示词已保存！修改将立即生效。');
+  alert('提示词已保存！修改将立即生效。');
 }
 
 function resetToDefault() {
@@ -87,7 +83,7 @@ function resetToDefault() {
     prompts.value = loadPrompts();
     selectPrompt(selectedId.value!);
     
-    alert('✅ 已重置为默认提示词。');
+    alert('已重置为默认提示词。');
   }
 }
 
@@ -108,124 +104,123 @@ function deleteCustomPrompt(id: string) {
 </script>
 
 <template>
-  <div class="p-4">
-    <!-- Header -->
-    <div class="flex items-center justify-between mb-4">
-      <button @click="emit('back')" class="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-        </svg>
-        返回
-      </button>
-      <h3 class="text-sm font-medium text-gray-700">📝 提示词管理</h3>
-    </div>
-
-    <!-- Filters -->
-    <div class="flex gap-2 mb-3">
+  <div class="px-5 py-5 flex-1 flex flex-col">
+    <div class="flex gap-2 mb-4">
       <input
         v-model="searchQuery"
         type="text"
         placeholder="搜索提示词..."
-        class="flex-1 px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+        class="input-field flex-1"
       />
       <select
         v-model="filterCategory"
-        class="px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+        class="input-field w-32"
       >
         <option v-for="cat in categories" :key="cat.value" :value="cat.value">{{ cat.label }}</option>
       </select>
     </div>
 
-    <!-- Two Column Layout -->
-    <div class="flex gap-3" style="height: calc(500px - 180px);">
-      <!-- Left: List -->
-      <div class="w-1/2 overflow-y-auto space-y-1.5 pr-1">
-        <p class="text-xs text-gray-400 mb-1">共 {{ filteredPrompts.length }} 个提示词模板</p>
+    <div class="flex gap-4 flex-1 min-h-0">
+      <div class="w-1/2 overflow-y-auto pr-1">
+        <p class="text-xs mb-3" style="color: var(--text-tertiary);">共 {{ filteredPrompts.length }} 个提示词模板</p>
         
         <div
           v-for="prompt in filteredPrompts"
           :key="prompt.id"
           @click="selectPrompt(prompt.id)"
-          class="p-2.5 rounded-lg cursor-pointer transition-colors"
-          :class="selectedId === prompt.id ? 'bg-blue-50 border border-blue-300' : 'bg-white/50 border border-transparent hover:bg-gray-50'"
+          class="p-3 rounded-xl cursor-pointer transition-all duration-200 mb-2 border"
+          :class="selectedId === prompt.id ? 'border-[var(--accent-warm)]' : 'border-transparent hover:border-[var(--border-subtle)]'"
+          :style="selectedId === prompt.id ? 'background: rgba(139, 115, 85, 0.06);' : 'background: var(--bg-secondary);'"
         >
           <div class="flex items-start justify-between">
-            <div>
-              <p class="text-xs font-medium text-gray-800">{{ prompt.name }}</p>
-              <p class="text-[10px] text-gray-400 mt-0.5 line-clamp-1">{{ prompt.description }}</p>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium truncate" style="color: var(--text-primary);">{{ prompt.name }}</p>
+              <p class="text-xs mt-0.5 truncate" style="color: var(--text-tertiary);">{{ prompt.description }}</p>
             </div>
             <span
               v-if="prompt.isDefault"
-              class="text-[9px] px-1 py-0.5 bg-gray-100 text-gray-500 rounded flex-shrink-0 ml-2"
+              class="ml-2 text-[10px] px-2 py-0.5 rounded-lg flex-shrink-0"
+              style="background: var(--bg-tertiary); color: var(--text-tertiary);"
             >默认</span>
             <span
               v-else
-              class="text-[9px] px-1 py-0.5 bg-purple-50 text-purple-500 rounded flex-shrink-0 ml-2"
+              class="ml-2 text-[10px] px-2 py-0.5 rounded-lg flex-shrink-0"
+              style="background: rgba(139, 115, 85, 0.08); color: var(--accent-warm);"
             >自定义</span>
           </div>
-          <div class="flex items-center gap-1 mt-1">
-            <span class="text-[9px] text-gray-300">{{ prompt.category }}</span>
-            <span class="text-[9px] text-gray-300">·</span>
-            <span class="text-[9px] text-gray-300">{{ new Date(prompt.updatedAt).toLocaleDateString() }}</span>
+          <div class="flex items-center gap-1.5 mt-2">
+            <span class="text-[10px]" style="color: var(--text-tertiary);">{{ prompt.category }}</span>
+            <span class="text-[10px]" style="color: var(--text-tertiary);">·</span>
+            <span class="text-[10px]" style="color: var(--text-tertiary);">{{ new Date(prompt.updatedAt).toLocaleDateString() }}</span>
           </div>
         </div>
 
-        <div v-if="filteredPrompts.length === 0" class="text-center py-4">
-          <p class="text-gray-400 text-sm">无匹配的提示词</p>
+        <div v-if="filteredPrompts.length === 0" class="py-8 text-center">
+          <svg class="w-10 h-10 mx-auto mb-2" style="color: var(--text-tertiary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <p class="text-sm" style="color: var(--text-tertiary);">无匹配的提示词</p>
         </div>
       </div>
 
-      <!-- Right: Editor -->
       <div class="w-1/2 flex flex-col">
-        <div v-if="selectedPrompt" class="h-full flex flex-col">
-          <div class="mb-2 flex items-center justify-between">
+        <div v-if="selectedPrompt" class="flex flex-col flex-1">
+          <div class="mb-3 flex items-start justify-between">
             <div>
-              <p class="text-xs font-medium text-gray-700">{{ selectedPrompt.name }}</p>
-              <p class="text-[10px] text-gray-400">{{ selectedPrompt.description }}</p>
+              <p class="text-sm font-medium" style="color: var(--text-primary);">{{ selectedPrompt.name }}</p>
+              <p class="text-xs" style="color: var(--text-tertiary);">{{ selectedPrompt.description }}</p>
             </div>
             <button
               v-if="!selectedPrompt.isDefault"
               @click="deleteCustomPrompt(selectedPrompt.id)"
-              class="p-1 text-red-400 hover:text-red-600"
+              class="icon-btn text-red-400 hover:text-red-600 hover:bg-red-50"
               title="删除自定义提示词"
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>
 
-          <!-- Variables hint -->
-          <div class="mb-2 p-1.5 bg-yellow-50 rounded text-[10px] text-yellow-600">
-            可用变量：{{ selectedPromptVariablesDisplay }}
+          <div class="mb-3 p-3 rounded-xl" style="background: rgba(139, 115, 85, 0.06); border: 1px solid rgba(139, 115, 85, 0.1);">
+            <p class="text-xs font-medium" style="color: var(--accent-warm);">可用变量：{{ selectedPromptVariablesDisplay }}</p>
           </div>
 
           <textarea
             v-model="editingContent"
-            rows="15"
-            class="flex-1 w-full p-2.5 text-xs font-mono border border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 resize-none"
+            rows="12"
+            class="flex-1 w-full p-3 text-sm rounded-xl border resize-none"
+            style="font-family: monospace; background: white; border-color: var(--border-subtle); color: var(--text-primary);"
             spellcheck="false"
           ></textarea>
 
-          <div class="mt-2 flex gap-2">
+          <div class="mt-3 flex gap-2">
             <button
               @click="saveEdit"
-              class="flex-1 py-2 text-xs bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+              class="btn-primary flex-1"
             >
-              💾 保存修改（立即生效）
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+              </svg>
+              保存修改
             </button>
             <button
               v-if="selectedPrompt.isDefault"
               @click="resetToDefault"
-              class="py-2 px-3 text-xs bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200 transition-colors"
+              class="btn-secondary"
             >
-              ↩️ 重置默认
+              重置默认
             </button>
           </div>
         </div>
 
-        <div v-else class="h-full flex items-center justify-center text-gray-400 text-sm">
-          ← 选择一个提示词进行编辑
+        <div v-else class="flex-1 flex items-center justify-center">
+          <div class="text-center">
+            <svg class="w-12 h-12 mx-auto mb-3" style="color: var(--text-tertiary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+            </svg>
+            <p class="text-sm" style="color: var(--text-tertiary);">选择一个提示词进行编辑</p>
+          </div>
         </div>
       </div>
     </div>

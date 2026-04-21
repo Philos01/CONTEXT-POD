@@ -3,28 +3,47 @@
 @tailwind utilities;
 
 :root {
-  --bg-primary: rgba(255, 255, 255, 0.72);
+  --bg-primary: rgba(255, 255, 255, 0.98);
+  --bg-secondary: rgba(250, 250, 252, 0.95);
+  --bg-tertiary: rgba(245, 245, 248, 0.9);
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-light: rgba(0, 0, 0, 0.04);
+  --text-primary: #1a1a1f;
+  --text-secondary: #6b6b75;
+  --text-tertiary: #9b9ba6;
+  --accent-primary: #2a2a32;
+  --accent-warm: #8b7355;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
 }
 
-/* html, body, #app {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  height: 100vh;
-  background: transparent !important;
-  overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-  user-select: none;
-} */
- html, body, #app {
+* {
+  box-sizing: border-box;
+}
+
+html, body, #app {
   margin: 0 !important;
   padding: 0 !important;
-  /* 使用固定像素而不是 vh/vw，确保和 config 严格一致 */
   width: 440px !important;
   height: 620px !important;
   overflow: hidden;
   background-color: transparent !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
 }
 
 body {
@@ -33,6 +52,7 @@ body {
 
 ::-webkit-scrollbar {
   width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
@@ -40,53 +60,185 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(156, 163, 175, 0.4);
-  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 4px;
 }
 
-/* .glass-panel {
-  background: var(--bg-primary);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.glass-panel {
+  background: linear-gradient(180deg, rgba(255,255,255,0.99) 0%, rgba(252,252,254,0.97) 100%);
+  backdrop-filter: blur(40px) saturate(150%);
+  -webkit-backdrop-filter: blur(40px) saturate(150%);
   border: none !important;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-} */
- .glass-panel {
-  /* 如果你的背景是半透明的，白框就会从后面透出来 */
-  /* 建议在这里先用实色测试，解决白框后再尝试半透明 */
-  background: white; 
-  width: 100%;
-  height: 100%;
-  border: none !important;
-  border-radius: 0; /* 先设为 0，看看白框是否消失 */
-  box-shadow: none !important; /* 关掉阴影，阴影是白框的主要元凶 */
+  outline: none !important;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.04);
 }
 
-.btn-strategy {
-  @apply px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150
-    hover:scale-[1.02] active:scale-[0.98] cursor-pointer;
+.btn-primary {
+  @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-xl transition-all duration-200;
+  background: linear-gradient(135deg, #2a2a32 0%, #1a1a1f 100%);
+  color: white;
+  box-shadow: var(--shadow-sm), 0 2px 8px rgba(42, 42, 50, 0.15);
 }
 
-.btn-strategy-a {
-  @apply btn-strategy bg-emerald-50 text-emerald-700 hover:bg-emerald-100
-    border border-emerald-200;
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md), 0 4px 12px rgba(42, 42, 50, 0.2);
 }
 
-.btn-strategy-b {
-  @apply btn-strategy bg-amber-50 text-amber-700 hover:bg-amber-100
-    border border-amber-200;
+.btn-primary:active {
+  transform: translateY(0);
 }
 
-.btn-strategy-c {
-  @apply btn-strategy bg-violet-50 text-violet-700 hover:bg-violet-100
-    border border-violet-200;
+.btn-secondary {
+  @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-xl transition-all duration-200;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
 }
 
-.typing-cursor::after {
-  content: '▋';
-  animation: blink 1s step-end infinite;
+.btn-secondary:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
-@keyframes blink {
-  50% { opacity: 0; }
+.btn-ghost {
+  @apply inline-flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-xl transition-all duration-200;
+  color: var(--text-tertiary);
+}
+
+.btn-ghost:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.input-field {
+  @apply w-full px-4 py-2.5 text-sm rounded-xl border transition-all duration-200;
+  background: white;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.input-field::placeholder {
+  color: var(--text-tertiary);
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: rgba(139, 115, 85, 0.4);
+  box-shadow: 0 0 0 3px rgba(139, 115, 85, 0.08);
+}
+
+.card {
+  @apply rounded-2xl p-4 transition-all duration-200;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+}
+
+.card:hover {
+  border-color: var(--border-subtle);
+  box-shadow: var(--shadow-sm);
+}
+
+.badge {
+  @apply inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.badge-success {
+  background: rgba(34, 197, 94, 0.1);
+  color: #16a34a;
+}
+
+.badge-warning {
+  background: rgba(234, 179, 8, 0.1);
+  color: #ca8a04;
+}
+
+.badge-error {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+.section-title {
+  @apply text-xs font-semibold tracking-wide uppercase;
+  color: var(--text-tertiary);
+  letter-spacing: 0.05em;
+}
+
+.divider {
+  height: 1px;
+  background: var(--border-light);
+  margin: var(--spacing-md) 0;
+}
+
+.icon-btn {
+  @apply p-2 rounded-xl transition-all duration-200 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)];
+}
+
+.text-label {
+  @apply text-xs font-medium;
+  color: var(--text-secondary);
+}
+
+.text-hint {
+  @apply text-xs;
+  color: var(--text-tertiary);
+}
+
+.text-value {
+  @apply text-sm font-medium;
+  color: var(--text-primary);
+}
+
+.stat-ring {
+  position: relative;
+  width: 64px;
+  height: 64px;
+}
+
+.stat-ring svg {
+  transform: rotate(-90deg);
+}
+
+.stat-ring-value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.animate-spin-slow {
+  animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useCapture } from '@/composables/useCapture';
 import { useWindowManager } from '@/composables/useWindowManager';
 import { useAppStore } from '@/stores/appStore';
 import { useContactStore } from '@/stores/contactStore';
-import { runWorkflowStream, identifyContactAsync, clearHistory, getHistory } from '@/services/agentWorkflow';
+import { runWorkflowStream, clearHistory, getHistory } from '@/services/agentWorkflow';
+import { getClient } from '@/services/llmService';
 import {
   startIdleDetector,
   stopIdleDetector,
@@ -21,7 +22,10 @@ import PersonaQuiz from './PersonaQuiz.vue';
 import PromptManager from './PromptManager.vue';
 import LogViewer from './LogViewer.vue';
 import EvolutionTest from './EvolutionTest.vue';
-import type { ReplyStrategy, AgentState } from '@/types';
+import DiagnosticTest from './DiagnosticTest.vue';
+import type { ReplyStrategy, AgentState, TacticalGoal } from '@/types';
+import { CONVERSATION_PHASE_LABELS, TACTICAL_GOAL_LABELS } from '@/types';
+import { getPhaseStrategyHint } from '@/services/conversationStateEngine';
 
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -30,28 +34,39 @@ const contactStore = useContactStore();
 const { initShortcut, cleanupShortcut, isRegistered, lastError } = useCapture();
 useWindowManager();
 
-// 记住上一次选择的联系人
-let lastSelectedContact = '';
-
 const rawContext = ref('');
 const strategies = ref<ReplyStrategy[]>([]);
 const streamingText = ref('');
 const isWorking = ref(false);
-const activeTab = ref<'main' | 'contacts' | 'settings' | 'style-extractor' | 'persona-quiz' | 'prompt-manager' | 'log-viewer' | 'evolution-test'>('main');
+const activeTab = ref<'main' | 'contacts' | 'settings' | 'style-extractor' | 'persona-quiz' | 'prompt-manager' | 'log-viewer' | 'evolution-test' | 'diagnostic-test'>('main');
 const agentResult = ref<AgentState | null>(null);
-const identifiedContact = ref<{ name: string; confidence: number; source: string } | null>(null);
 const manualContactName = ref('');
+const manualContactIdentity = ref('');
 const showContactPicker = ref(false);
+const selectedTacticalGoal = ref<TacticalGoal>('stabilize');
+const lastSelectedStrategy = ref<string>('');
 const historyCount = computed(() => getHistory().length);
 const personaCount = computed(() => {
   const personas = localStorage.getItem('context-pod-personas');
-  if (!personas) return 0;
-  return Object.keys(JSON.parse(personas)).length;
+  const dynamicPersonas = localStorage.getItem('context-pod-dynamic-personas');
+  const contactNames = contactStore.contacts.map(c => c.name);
+  let count = 0;
+  
+  if (personas) {
+    const personaData = JSON.parse(personas);
+    count += Object.keys(personaData).filter(name => contactNames.includes(name)).length;
+  }
+  
+  if (dynamicPersonas) {
+    const dynamicPersonaData = JSON.parse(dynamicPersonas);
+    count += Object.keys(dynamicPersonaData).filter(name => contactNames.includes(name)).length;
+  }
+  
+  return count;
 });
 const evolutionStatus = ref<EvolutionStatus>(getEvolutionStatus());
 const contactManagerRef = ref<any>(null);
 
-// 用户自定义回复相关
 const showCustomReply = ref(false);
 const customReplyText = ref('');
 const isSavingReply = ref(false);
@@ -62,9 +77,24 @@ const stageMessages: Record<string, string> = {
   idle: '',
   capturing: '正在抓取上下文...',
   extracting: '正在识别对话对象...',
+  classifying: '正在分析对话局势...',
+  evaluating: '正在复盘历史策略...',
   retrieving: '正在检索记忆档案...',
   generating: '正在推演回复策略...',
   ready: '推演完成',
+};
+
+const isSubPage = computed(() => activeTab.value !== 'main');
+
+const tabTitles: Record<string, string> = {
+  contacts: '联系人管理',
+  settings: '设置',
+  'style-extractor': '风格提取',
+  'persona-quiz': '赛博捏脸',
+  'prompt-manager': '提示词管理',
+  'log-viewer': '系统日志',
+  'evolution-test': '进化测试',
+  'diagnostic-test': '风格诊断',
 };
 
 onMounted(async () => {
@@ -87,8 +117,16 @@ onMounted(async () => {
   });
   
   if (!appStore.isConfigured) {
-    console.log('[Context-Pod] ⚠️ API Key not configured, please go to Settings');
+    console.log('[Context-Pod] API Key not configured, please go to Settings');
     activeTab.value = 'settings';
+  } else {
+    console.log('[Context-Pod] Step 4: Preloading LLM client...');
+    try {
+      getClient(appStore.settings);
+      console.log('[Context-Pod] LLM client preloaded');
+    } catch (e) {
+      console.error('[Context-Pod] LLM client preload failed (non-blocking):', e);
+    }
   }
 });
 
@@ -101,12 +139,6 @@ onUnmounted(async () => {
   }
 });
 
-watch(activeTab, (newTab) => {
-  if (newTab === 'contacts' && contactManagerRef.value) {
-    contactManagerRef.value.refreshAllBufferCounts();
-  }
-});
-
 async function handleCapture(result: { text: string }) {
   if (!appStore.isConfigured) {
     activeTab.value = 'settings';
@@ -114,42 +146,29 @@ async function handleCapture(result: { text: string }) {
   }
 
   if (!result.text || result.text.trim().length === 0) {
-    streamingText.value = '剪贴板为空！请先选中文字并 Ctrl+C 复制';
+    streamingText.value = '剪贴板为空';
     setTimeout(() => { streamingText.value = ''; }, 3000);
     return;
   }
 
   rawContext.value = result.text;
-  isWorking.value = true;
+  isWorking.value = false;
   strategies.value = [];
   streamingText.value = '';
   activeTab.value = 'main';
 
-  const identification = await identifyContactAsync(result.text);
-  identifiedContact.value = identification;
-  console.log(`[Context-Pod] Contact identified:`, identification);
-
-  // 如果识别失败，但有记住的联系人，直接使用
-  if (identification.name === '未知联系人') {
-    if (lastSelectedContact) {
-      console.log(`[Context-Pod] Using remembered contact: ${lastSelectedContact}`);
-      await executeWorkflow(result.text, lastSelectedContact);
-      return;
-    }
-    showContactPicker.value = true;
-    isWorking.value = false;
-    streamingText.value = '请选择或输入联系人';
-    return;
-  }
-
-  await executeWorkflow(result.text);
+  showContactPicker.value = true;
+  streamingText.value = '请选择或输入联系人';
 }
 
-async function executeWorkflow(text: string, overrideName?: string) {
+async function executeWorkflow(text: string, overrideName?: string, overrideIdentity?: string) {
   isWorking.value = true;
   showContactPicker.value = false;
 
   try {
+    const contactName = overrideName || manualContactName.value;
+    const contactIdentity = overrideIdentity || manualContactIdentity.value;
+    
     const workflowText = overrideName && !text.includes(overrideName)
       ? `${overrideName}: [消息]\n${text}`
       : text;
@@ -160,7 +179,10 @@ async function executeWorkflow(text: string, overrideName?: string) {
       (stage, message) => {
         appStore.setWorkflowStage(stage as any, message);
         streamingText.value = stageMessages[stage] || message;
-      }
+      },
+      selectedTacticalGoal.value,
+      contactName,
+      contactIdentity
     );
 
     agentResult.value = state;
@@ -181,6 +203,8 @@ function skipContactSelection() {
 
 async function injectToChat(selectedReply: string) {
   try {
+    lastSelectedStrategy.value = selectedReply;
+
     if (isTauri) {
       const { writeText } = await import('@tauri-apps/plugin-clipboard-manager');
       await writeText(selectedReply);
@@ -209,28 +233,26 @@ function resetToIdle() {
   streamingText.value = '';
   isWorking.value = false;
   showContactPicker.value = false;
-  identifiedContact.value = null;
   manualContactName.value = '';
+  manualContactIdentity.value = '';
   activeTab.value = 'main';
   console.log('[Context-Pod] Reset to idle state');
 }
 
-function selectExistingContact(name: string) {
-  lastSelectedContact = name;
+function selectExistingContact(name: string, identity?: string) {
   manualContactName.value = name;
+  manualContactIdentity.value = identity || '';
   showContactPicker.value = false;
-  executeWorkflow(rawContext.value, name);
+  executeWorkflow(rawContext.value, name, identity);
 }
 
 function submitManualContact() {
   if (manualContactName.value.trim()) {
-    lastSelectedContact = manualContactName.value.trim();
     showContactPicker.value = false;
-    executeWorkflow(rawContext.value, manualContactName.value.trim());
+    executeWorkflow(rawContext.value, manualContactName.value.trim(), manualContactIdentity.value.trim());
   }
 }
 
-// 用户自定义回复相关函数
 function toggleCustomReply() {
   showCustomReply.value = !showCustomReply.value;
   if (showCustomReply.value) {
@@ -247,20 +269,17 @@ function saveCustomReply(_modelReply: string) {
   try {
     const contactName = agentResult.value.targetPerson;
     
-    console.log('[Context-Pod] 💾 保存用户自定义回复，学习用户风格...');
+    console.log('[Context-Pod] Saving user custom reply...');
     
-    // 保存用户回复到聊天缓冲区
-    // 同时保存原始上下文和用户回复
     const combinedText = `${rawContext.value}\n我: ${customReplyText.value}`;
     saveUserReply(combinedText, contactName, customReplyText.value);
     
-    alert('✅ 回复已保存！当积累足够数据后，系统会在闲时自动学习您的风格！');
+    alert('回复已保存！当积累足够数据后，系统会在闲时自动学习您的风格。');
     
-    // 清空输入并隐藏区域
     customReplyText.value = '';
     showCustomReply.value = false;
   } catch (error) {
-    console.error('[Context-Pod] ❌ 保存失败:', error);
+    console.error('[Context-Pod] Save failed:', error);
     alert('保存失败，请稍后重试');
   } finally {
     isSavingReply.value = false;
@@ -294,311 +313,385 @@ async function closeWindow() {
   }
 }
 
+function setTacticalGoalAndExecute(key: string) {
+  selectedTacticalGoal.value = key as TacticalGoal;
+  executeWorkflow(rawContext.value);
+}
+
 function goBack() {
   activeTab.value = 'main';
 }
 </script>
 
 <template>
-  <div class="glass-panel rounded-2xl shadow-2xl w-[420px] max-h-[600px] overflow-hidden animate-fade-in flex flex-col border-none" data-tauri-drag-region>
-    <!-- Header -->
-    <div class="flex items-center justify-between px-4 py-3 border-b border-white/20 select-none" data-tauri-drag-region>
-      <div class="flex items-center gap-2 cursor-default">
+  <div class="glass-panel w-full h-full overflow-hidden flex flex-col" data-tauri-drag-region>
+    <div class="flex items-center justify-between px-5 py-4 border-b" style="border-color: var(--border-light);" data-tauri-drag-region>
+      <div class="flex items-center gap-3 cursor-default">
+        <button
+          v-if="isSubPage"
+          @click="goBack"
+          class="icon-btn"
+          title="返回主页"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
         <div class="w-2 h-2 rounded-full" :class="isWorking ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'"></div>
-        <span class="text-sm font-medium text-gray-700">伴聊悬浮舱</span>
-        <span v-if="historyCount > 0" class="text-xs text-gray-400">({{ historyCount }}条记录)</span>
+        <span class="text-sm font-semibold tracking-tight" style="color: var(--text-primary);">{{ isSubPage ? tabTitles[activeTab] || '详情' : 'Context Pod' }}</span>
       </div>
-      <div class="flex items-center gap-1" data-tauri-drag-region="false">
+      <div class="flex items-center gap-0.5" data-tauri-drag-region="false">
         <button
           v-if="historyCount > 0"
           @click="handleClearHistory"
-          class="p-1.5 rounded-lg hover:bg-white/40 transition-colors text-gray-400 hover:text-red-500"
+          class="icon-btn"
           title="清除对话历史"
         >
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
           </svg>
         </button>
         <button
+          v-if="!isSubPage"
           @click="activeTab = 'contacts'"
-          class="p-1.5 rounded-lg hover:bg-white/40 transition-colors text-gray-500 hover:text-gray-700"
+          class="icon-btn"
           title="联系人管理"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
         </button>
         <button
+          v-if="!isSubPage"
           @click="activeTab = 'settings'"
-          class="p-1.5 rounded-lg hover:bg-white/40 transition-colors text-gray-500 hover:text-gray-700"
+          class="icon-btn"
           title="设置"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573z" />
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
         </button>
         <button
           v-if="isTauri"
           @click="minimizeToTray"
-          class="p-1.5 rounded-lg hover:bg-white/40 transition-colors text-gray-500 hover:text-gray-700"
+          class="icon-btn"
           title="最小化到托盘"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 12H4" />
           </svg>
         </button>
         <button
           v-if="isTauri"
           @click="closeWindow"
-          class="p-1.5 rounded-lg hover:bg-red-100 transition-colors text-gray-500 hover:text-red-600"
-          title="关闭（最小化到托盘）"
+          class="icon-btn hover:text-red-500 hover:bg-red-50"
+          title="关闭"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
       </div>
     </div>
 
-    <!-- Main Panel -->
-    <div v-if="activeTab === 'main'" class="p-4 flex-1 overflow-auto">
-      <!-- Idle State -->
-      <div v-if="!isWorking && strategies.length === 0 && !showContactPicker" class="text-center py-6">
-        <div class="text-4xl mb-3">🛸</div>
-        
-        <!-- 快捷键状态 -->
-        <div class="mb-3 p-2 rounded-lg" :class="isRegistered ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'">
-          <div class="flex items-center justify-center gap-2">
-            <span class="text-xs" :class="isRegistered ? 'text-green-600' : 'text-red-600'">
-              {{ isRegistered ? '✅ 快捷键已注册' : '❌ 快捷键未注册' }}
-            </span>
+    <div v-if="activeTab === 'main'" class="flex-1 overflow-auto">
+      <div class="px-5 py-5">
+      <div v-if="!isWorking && strategies.length === 0 && !showContactPicker" class="space-y-5">
+        <div class="text-center py-6">
+          <div class="w-16 h-16 mx-auto mb-4 rounded-2xl flex items-center justify-center" style="background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%); border: 1px solid var(--border-light);">
+            <svg class="w-7 h-7" style="color: var(--text-tertiary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
           </div>
-          <p class="text-gray-500 text-sm mt-1">
-            按下 <kbd class="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-mono">{{ appStore.settings.shortcutKey }}</kbd> 唤醒
-          </p>
-          <div v-if="lastError" class="mt-2 p-2 bg-red-100 border border-red-300 rounded text-xs text-red-700 text-left">
-            <div class="font-bold mb-1">⚠️ 错误详情：</div>
-            <div class="break-all">{{ lastError }}</div>
-          </div>
-          <div class="mt-2 text-xs text-gray-400">
-            环境: {{ isTauri ? 'Tauri 桌面' : '浏览器' }}
-          </div>
-        </div>
-        
-        <p class="text-gray-400 text-xs">在聊天窗口中使用快捷键抓取上下文</p>
-        
-        <!-- 使用说明 -->
-        <div class="mt-2 p-2 bg-blue-50 rounded-lg border border-blue-200 text-left">
-          <p class="text-xs text-blue-600 font-medium mb-1">📖 使用步骤</p>
-          <ol class="text-xs text-blue-500 space-y-0.5 list-decimal list-inside">
-            <li>在微信中选中聊天文字</li>
-            <li>按 Ctrl+C 复制</li>
-            <li>按 {{ appStore.settings.shortcutKey }} 触发捕获</li>
-            <li>选择合适的回复策略</li>
-          </ol>
+          <h2 class="text-base font-semibold mb-1" style="color: var(--text-primary);">准备就绪</h2>
+          <p class="text-sm" style="color: var(--text-tertiary);">等待您的下一个对话</p>
         </div>
 
-        <!-- 调试工具 -->
-        <!-- <div class="mt-2 p-2 bg-red-50 rounded-lg border border-red-200 text-left">
-          <p class="text-xs text-red-600 font-medium mb-1">🛠️ 调试工具</p>
-          <p class="text-xs text-red-500 mb-2">如果捕获结果是 "0.52.0"，说明剪贴板有残留内容，请按下面按钮处理。</p>
-          <div class="flex gap-2">
-            <button
-              @click="clearClipboard"
-              class="flex-1 py-1.5 text-xs bg-red-500 text-white rounded hover:bg-red-600 transition"
-            >
-              🗑️ 清空剪贴板
-            </button>
-            <button
-              @click="debugClipboard"
-              class="flex-1 py-1.5 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 transition"
-            >
-              🔍 查看剪贴板
-            </button>
-          </div>
-        </div> -->
+        <div class="flex items-center justify-between p-4 rounded-xl" style="background: var(--bg-secondary); border: 1px solid var(--border-light);">
+          <span class="text-sm font-medium flex items-center gap-2" style="color: var(--text-secondary);">
+            <svg class="w-4 h-4" style="color: var(--text-tertiary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            快捷键状态
+          </span>
+          <span class="text-xs px-2.5 py-1 rounded-lg font-medium" :class="isRegistered ? 'badge-success' : 'badge-error'">
+            {{ isRegistered ? '已连接' : '未连接' }} {{ appStore.settings.shortcutKey }}
+          </span>
+        </div>
 
-        <!-- 风格功能入口 -->
-        <div class="mt-3 flex gap-2">
+        <div v-if="lastError" class="p-4 rounded-xl" style="background: rgba(239, 68, 68, 0.06); border: 1px solid rgba(239, 68, 68, 0.12);">
+          <div class="flex items-center gap-2 mb-2">
+            <svg class="w-4 h-4" style="color: #dc2626;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <span class="text-sm font-medium" style="color: #dc2626;">错误详情</span>
+          </div>
+          <p class="text-xs" style="color: #dc2626; word-break: break-all;">{{ lastError }}</p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
           <button
             @click="activeTab = 'style-extractor'"
-            class="flex-1 py-2 text-xs bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-100 border border-amber-200 transition-colors"
+            class="group flex flex-col items-center gap-3 p-5 rounded-2xl transition-all duration-200"
+            style="background: var(--bg-secondary); border: 1px solid var(--border-light);"
           >
-            🎭 提取风格
+            <div class="w-11 h-11 rounded-xl flex items-center justify-center transition-transform group-hover:scale-105" style="background: linear-gradient(135deg, rgba(139, 115, 85, 0.1) 0%, rgba(139, 115, 85, 0.05) 100%);">
+              <svg class="w-5 h-5" style="color: var(--accent-warm);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+              </svg>
+            </div>
+            <div class="text-center">
+              <p class="text-sm font-medium" style="color: var(--text-primary);">提取风格</p>
+              <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">学习语气</p>
+            </div>
           </button>
+
           <button
             @click="activeTab = 'persona-quiz'"
-            class="flex-1 py-2 text-xs bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 border border-purple-200 transition-colors"
+            class="group flex flex-col items-center gap-3 p-5 rounded-2xl transition-all duration-200"
+            style="background: var(--bg-secondary); border: 1px solid var(--border-light);"
           >
-            🧬 赛博捏脸
+            <div class="w-11 h-11 rounded-xl flex items-center justify-center transition-transform group-hover:scale-105" style="background: linear-gradient(135deg, rgba(139, 115, 85, 0.08) 0%, rgba(139, 115, 85, 0.04) 100%);">
+              <svg class="w-5 h-5" style="color: var(--accent-warm);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
+            </div>
+            <div class="text-center">
+              <p class="text-sm font-medium" style="color: var(--text-primary);">赛博捏脸</p>
+              <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">定义人设</p>
+            </div>
           </button>
-        </div>
 
-        <!-- 高级功能入口 -->
-        <div class="mt-2 flex gap-2">
           <button
             @click="activeTab = 'prompt-manager'"
-            class="flex-1 py-1.5 text-xs bg-gray-50 text-gray-500 rounded-lg hover:bg-gray-100 border border-gray-200 transition-colors"
+            class="group flex flex-col items-center gap-3 p-5 rounded-2xl transition-all duration-200"
+            style="background: var(--bg-secondary); border: 1px solid var(--border-light);"
           >
-            📝 提示词
+            <div class="w-11 h-11 rounded-xl flex items-center justify-center transition-transform group-hover:scale-105" style="background: linear-gradient(135deg, rgba(139, 115, 85, 0.06) 0%, rgba(139, 115, 85, 0.03) 100%);">
+              <svg class="w-5 h-5" style="color: var(--accent-warm);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <div class="text-center">
+              <p class="text-sm font-medium" style="color: var(--text-primary);">提示词</p>
+              <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">自定义配置</p>
+            </div>
           </button>
+
           <button
             @click="activeTab = 'log-viewer'"
-            class="flex-1 py-1.5 text-xs bg-gray-50 text-gray-500 rounded-lg hover:bg-gray-100 border border-gray-200 transition-colors"
+            class="group flex flex-col items-center gap-3 p-5 rounded-2xl transition-all duration-200"
+            style="background: var(--bg-secondary); border: 1px solid var(--border-light);"
           >
-            📋 日志
-          </button>
-        </div>
-        <!-- 测试工具入口 -->
-        <div class="mt-2">
-          <button
-            @click="activeTab = 'evolution-test'"
-            class="w-full py-2 text-xs bg-teal-50 text-teal-600 rounded-lg hover:bg-teal-100 border border-teal-200 transition-colors"
-          >
-            🧪 进化测试工具
+            <div class="w-11 h-11 rounded-xl flex items-center justify-center transition-transform group-hover:scale-105" style="background: linear-gradient(135deg, rgba(139, 115, 85, 0.04) 0%, rgba(139, 115, 85, 0.02) 100%);">
+              <svg class="w-5 h-5" style="color: var(--accent-warm);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <div class="text-center">
+              <p class="text-sm font-medium" style="color: var(--text-primary);">系统日志</p>
+              <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">查看记录</p>
+            </div>
           </button>
         </div>
 
-        <!-- 风格画像统计 -->
-        <div v-if="personaCount > 0" class="mt-2 p-2 bg-green-50 rounded-lg border border-green-200">
-          <p class="text-xs text-green-600">✅ 已建立 {{ personaCount }} 个风格画像</p>
+        <div v-if="personaCount > 0" class="flex items-center gap-3 p-4 rounded-xl" style="background: rgba(34, 197, 94, 0.06); border: 1px solid rgba(34, 197, 94, 0.1);">
+          <svg class="w-5 h-5 flex-shrink-0" style="color: #16a34a;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span class="text-sm font-medium" style="color: #16a34a;">已建立 {{ personaCount }} 个风格画像</span>
         </div>
 
-        <!-- 浏览器模式提示 -->
-        <div v-if="!isTauri" class="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
-          <p class="text-xs text-blue-600 font-medium mb-1">🌐 浏览器测试模式</p>
-          <p class="text-xs text-blue-500">按 {{ appStore.settings.shortcutKey }} 模拟快捷键</p>
+        <div v-if="!isTauri" class="flex items-center gap-3 p-4 rounded-xl" style="background: rgba(139, 115, 85, 0.06); border: 1px solid rgba(139, 115, 85, 0.1);">
+          <svg class="w-5 h-5 flex-shrink-0" style="color: var(--accent-warm);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+          </svg>
+          <div>
+            <p class="text-sm font-medium" style="color: var(--text-primary);">浏览器测试模式</p>
+            <p class="text-xs mt-0.5" style="color: var(--text-secondary);">按 {{ appStore.settings.shortcutKey }} 模拟快捷键</p>
+          </div>
         </div>
 
-        <!-- 未配置提示 -->
-        <div v-if="!appStore.isConfigured && isTauri" class="mt-3 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-          <p class="text-xs text-yellow-700 font-medium mb-1">⚠️ 首次使用请先配置</p>
-          <button 
-            @click="activeTab = 'settings'"
-            class="mt-2 px-4 py-1.5 bg-yellow-500 text-white text-xs rounded hover:bg-yellow-600"
-          >
-            前往设置 →
-          </button>
+        <div v-if="!appStore.isConfigured && isTauri" class="p-4 rounded-xl" style="background: rgba(234, 179, 8, 0.06); border: 1px solid rgba(234, 179, 8, 0.1);">
+          <div class="flex items-start gap-3">
+            <svg class="w-5 h-5 flex-shrink-0 mt-0.5" style="color: #ca8a04;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <div class="flex-1">
+              <p class="text-sm font-semibold mb-2" style="color: #92400e;">首次使用请先配置</p>
+              <button 
+                @click="activeTab = 'settings'"
+                class="btn-primary w-full"
+              >
+                前往设置
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Contact Picker (when contact not identified) -->
-      <div v-if="showContactPicker" class="py-4">
-        <!-- 返回按钮 -->
+      <div v-if="showContactPicker" class="space-y-5">
         <button
           @click="showContactPicker = false; resetToIdle()"
-          class="mb-4 flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors"
+          class="flex items-center gap-2 text-sm transition-colors"
+          style="color: var(--text-secondary);"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path d="M15 19l-7-7 7-7"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 19l-7-7 7-7" />
           </svg>
           返回首页
         </button>
-        
-        <div class="text-center mb-3">
-          <div class="text-2xl mb-2">👤</div>
-          <p class="text-sm text-gray-600 font-medium">未识别到联系人</p>
-          <p class="text-xs text-gray-400 mt-1">请选择或输入对话对象的名称</p>
-        </div>
 
-        <!-- Last used contact -->
-        <div v-if="lastSelectedContact" class="mb-3 p-2 bg-green-50 rounded-lg border border-green-200">
-          <p class="text-xs text-green-600 mb-2">上一次选择的联系人：</p>
-          <div class="flex gap-2">
-            <button
-              @click="selectExistingContact(lastSelectedContact)"
-              class="flex-1 px-3 py-2 text-xs bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
-            >
-              使用 {{ lastSelectedContact }}
-            </button>
-            <button
-              @click="lastSelectedContact = ''"
-              class="px-3 py-2 text-xs bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300 transition-colors"
-            >
-              清除
-            </button>
+        <div class="text-center py-4">
+          <div class="w-14 h-14 mx-auto mb-3 rounded-2xl flex items-center justify-center" style="background: var(--bg-tertiary); border: 1px solid var(--border-light);">
+            <svg class="w-6 h-6" style="color: var(--text-tertiary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
           </div>
+          <h3 class="text-base font-semibold mb-1" style="color: var(--text-primary);">选择联系人</h3>
+          <p class="text-sm" style="color: var(--text-tertiary);">请选择或输入对话对象的名称</p>
         </div>
 
-        <!-- Existing contacts -->
-        <div v-if="contactStore.contacts.length > 0" class="mb-3">
-          <p class="text-xs text-gray-500 mb-2">从已有联系人中选择：</p>
-          <div class="flex flex-wrap gap-1.5">
+        <div v-if="contactStore.contacts.length > 0" class="p-4 rounded-xl" style="background: var(--bg-secondary); border: 1px solid var(--border-light);">
+          <p class="text-sm font-medium mb-3" style="color: var(--text-secondary);">已有联系人</p>
+          <div class="flex flex-wrap gap-2">
             <button
               v-for="contact in contactStore.contacts"
               :key="contact.id"
-              @click="selectExistingContact(contact.name)"
-              class="px-2.5 py-1 text-xs bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100 border border-blue-200 transition-colors"
+              @click="selectExistingContact(contact.name, (contact as any).identity)"
+              class="px-4 py-2 text-sm rounded-xl transition-all duration-200 font-medium"
+              style="background: white; border: 1px solid var(--border-subtle); color: var(--text-primary);"
             >
               {{ contact.name }}
+              <span v-if="(contact as any).identity" class="text-xs opacity-60 ml-1">({{ (contact as any).identity }})</span>
             </button>
           </div>
         </div>
 
-        <!-- Manual input -->
-        <div class="mb-3">
-          <p class="text-xs text-gray-500 mb-2">或手动输入名称：</p>
+        <div class="space-y-3">
+          <p class="text-sm font-medium" style="color: var(--text-secondary);">或手动输入</p>
           <div class="flex gap-2">
             <input
               v-model="manualContactName"
               type="text"
               placeholder="输入联系人名称"
-              class="flex-1 px-3 py-1.5 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
+              class="input-field"
               @keyup.enter="submitManualContact"
             />
             <button
               @click="submitManualContact"
-              class="px-3 py-1.5 text-xs bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+              class="btn-primary px-6"
             >
               确认
             </button>
           </div>
+          <input
+            v-model="manualContactIdentity"
+            type="text"
+            placeholder="对方身份（可选）例：相亲对象、客户、同事"
+            class="input-field"
+            @keyup.enter="submitManualContact"
+          />
         </div>
 
-        <!-- Skip -->
         <button
           @click="skipContactSelection"
-          class="w-full px-3 py-2 text-xs bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200 transition-colors"
+          class="w-full py-3 text-sm rounded-xl transition-colors font-medium"
+          style="background: var(--bg-tertiary); color: var(--text-secondary);"
         >
           跳过，使用通用回复
         </button>
       </div>
 
-      <!-- Working State -->
-      <div v-if="isWorking" class="py-6 text-center">
-        <div class="inline-flex items-center gap-2 text-blue-500">
-          <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
-          <span class="text-sm">{{ streamingText }}</span>
+      <div v-if="isWorking" class="py-12 text-center">
+        <div class="inline-flex items-center gap-3">
+          <div class="w-8 h-8 rounded-xl flex items-center justify-center" style="background: linear-gradient(135deg, rgba(139, 115, 85, 0.1) 0%, rgba(139, 115, 85, 0.05) 100%);">
+            <svg class="w-4 h-4 animate-spin-slow" style="color: var(--accent-warm);" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </div>
+          <span class="text-sm font-medium" style="color: var(--text-secondary);">{{ streamingText }}</span>
         </div>
       </div>
 
-      <!-- Results -->
-      <div v-if="!isWorking && strategies.length > 0" class="space-y-2 animate-slide-up">
-        <div v-if="agentResult" class="mb-3 px-3 py-2 bg-blue-50/60 rounded-lg">
-          <p class="text-xs text-blue-600">
-            对话对象：<span class="font-medium">{{ agentResult.targetPerson }}</span>
-          </p>
-          <p v-if="agentResult.memoryData !== '暂无此人记录'" class="text-xs text-blue-500 mt-0.5 truncate">
-            记忆：{{ agentResult.memoryData }}
-          </p>
-          <p v-if="historyCount > 0" class="text-xs text-blue-400 mt-0.5">
-            📚 已结合 {{ historyCount }} 条历史对话
-          </p>
-        </div>
-
-        <!-- 返回按钮 -->
+      <div v-if="!isWorking && strategies.length > 0" class="space-y-4">
         <button
           @click="resetToIdle"
-          class="mb-2 w-full px-3 py-2 text-xs bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors flex items-center justify-center gap-1"
+          class="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl transition-all duration-200 text-sm font-medium"
+          style="background: var(--bg-tertiary); color: var(--text-secondary);"
         >
-          ← 返回首页 / 重新捕获
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+          </svg>
+          返回首页
         </button>
 
-        <div class="space-y-2">
+        <div v-if="agentResult" class="p-4 rounded-2xl" style="background: var(--bg-secondary); border: 1px solid var(--border-light);">
+          <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-xl flex items-center justify-center" style="background: white; border: 1px solid var(--border-subtle);">
+                <svg class="w-4 h-4" style="color: var(--accent-warm);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </div>
+              <div>
+                <p class="text-xs font-medium" style="color: var(--text-tertiary);">对话对象</p>
+                <p class="text-base font-semibold" style="color: var(--text-primary);">{{ agentResult.targetPerson }}</p>
+              </div>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-2 mb-3">
+            <span class="badge" style="background: rgba(139, 115, 85, 0.08); color: var(--accent-warm);">
+              {{ CONVERSATION_PHASE_LABELS[agentResult.conversationPhase] || agentResult.conversationPhase }}
+            </span>
+            <span class="badge">
+              {{ TACTICAL_GOAL_LABELS[agentResult.tacticalGoal] || agentResult.tacticalGoal }}
+            </span>
+          </div>
+          <p class="text-sm leading-relaxed" style="color: var(--text-secondary);">
+            {{ getPhaseStrategyHint(agentResult.conversationPhase) }}
+          </p>
+          <div v-if="agentResult.memoryData !== '暂无此人记录'" class="mt-3 pt-3" style="border-top: 1px solid var(--border-light);">
+            <div class="flex items-start gap-2">
+              <svg class="w-4 h-4 mt-0.5 flex-shrink-0" style="color: var(--text-tertiary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <p class="text-xs truncate" style="color: var(--text-secondary);">记忆：{{ agentResult.memoryData }}</p>
+            </div>
+          </div>
+          <div v-if="historyCount > 0" class="mt-2">
+            <div class="flex items-start gap-2">
+              <svg class="w-4 h-4 mt-0.5 flex-shrink-0" style="color: var(--text-tertiary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
+              <p class="text-xs" style="color: var(--text-tertiary);">已结合 {{ historyCount }} 条历史对话</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="p-4 rounded-xl" style="background: var(--bg-secondary); border: 1px solid var(--border-light);">
+          <p class="text-sm font-medium mb-3 flex items-center gap-2" style="color: var(--text-secondary);">
+            <svg class="w-4 h-4" style="color: var(--text-tertiary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            切换战略目标
+          </p>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="(label, key) in TACTICAL_GOAL_LABELS"
+              :key="key"
+              @click="setTacticalGoalAndExecute(key)"
+              class="px-3 py-1.5 text-sm rounded-lg transition-all duration-200 font-medium"
+              :class="selectedTacticalGoal === key ? 'btn-primary' : 'btn-secondary'"
+            >
+              {{ label }}
+            </button>
+          </div>
+        </div>
+
+        <div class="space-y-3">
           <ReplyCard
             v-for="(strategy, index) in strategies"
             :key="index"
@@ -608,110 +701,97 @@ function goBack() {
           />
         </div>
 
-        <!-- 用户自定义回复区域 -->
-        <div class="mt-4 pt-3 border-t border-gray-200">
-          <!-- 展开/收起按钮 -->
+        <div class="pt-2">
           <button
             @click="toggleCustomReply"
-            class="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
+            class="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl transition-all duration-200 text-sm font-medium"
+            :style="showCustomReply ? 'background: var(--bg-tertiary); color: var(--text-secondary);' : 'background: var(--bg-secondary); border: 1px solid var(--border-light); color: var(--text-secondary);'"
           >
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path v-if="!showCustomReply" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4" />
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path v-if="!showCustomReply" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4v16m8-8H4" />
+              <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 12H4" />
             </svg>
-            {{ showCustomReply ? '收起自定义回复' : '💡 添加自己的回复，让系统学习您的风格' }}
+            {{ showCustomReply ? '收起自定义回复' : '添加自己的回复，让系统学习您的风格' }}
           </button>
 
-          <!-- 自定义回复输入区域 -->
           <div v-if="showCustomReply" class="mt-3 space-y-3">
-            <!-- 隐私提示 -->
-            <div class="p-2 bg-amber-50 border border-amber-200 rounded-lg">
-              <p class="text-xs text-amber-700 font-medium">🔒 隐私保护提示</p>
-              <p class="text-xs text-amber-600 mt-1">您的回复将只保存在本地用于学习您的回复风格，不会发送到任何服务器。</p>
+            <div class="p-4 rounded-xl" style="background: rgba(234, 179, 8, 0.06); border: 1px solid rgba(234, 179, 8, 0.1);">
+              <div class="flex items-center gap-2 mb-1">
+                <svg class="w-4 h-4" style="color: #ca8a04;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+                <p class="text-sm font-medium" style="color: #92400e;">隐私保护</p>
+              </div>
+              <p class="text-xs" style="color: #92400e;">您的回复将只保存在本地用于学习您的回复风格，不会发送到任何服务器。</p>
             </div>
 
-            <!-- 输入框 -->
             <textarea
               v-model="customReplyText"
               placeholder="输入您想要的回复内容..."
-              class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 resize-none"
+              class="input-field resize-none"
               rows="3"
             ></textarea>
 
-            <!-- 保存按钮 -->
             <button
               @click="saveCustomReply(strategies[0]?.content || '')"
               :disabled="!customReplyText.trim() || isSavingReply"
-              class="w-full px-3 py-2 text-sm bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:bg-gray-300 transition-colors flex items-center justify-center gap-1.5"
+              class="btn-primary w-full"
             >
-              <svg v-if="isSavingReply" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+              <svg v-if="isSavingReply" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              {{ isSavingReply ? '保存中...' : '✅ 保存并学习我的风格' }}
+              {{ isSavingReply ? '保存中...' : '保存并学习我的风格' }}
             </button>
           </div>
         </div>
       </div>
     </div>
+    </div>
 
-    <!-- Contacts Panel -->
-    <div v-if="activeTab === 'contacts'" class="flex-1 overflow-auto">
+    <div v-if="activeTab === 'contacts'" class="flex-1 flex flex-col overflow-auto">
       <ContactManager
         ref="contactManagerRef"
         @back="goBack"
       />
     </div>
 
-    <!-- Settings Panel -->
-    <div v-if="activeTab === 'settings'" class="flex-1 overflow-auto">
+    <div v-if="activeTab === 'settings'" class="flex-1 flex flex-col overflow-auto">
       <SettingsPanel
         @back="goBack"
       />
     </div>
 
-    <!-- Style Extractor -->
-    <div v-if="activeTab === 'style-extractor'" class="flex-1 overflow-auto">
+    <div v-if="activeTab === 'style-extractor'" class="flex-1 flex flex-col overflow-auto">
       <StyleExtractor
         @back="goBack"
       />
     </div>
 
-    <!-- Persona Quiz -->
-    <div v-if="activeTab === 'persona-quiz'" class="flex-1 overflow-auto">
+    <div v-if="activeTab === 'persona-quiz'" class="flex-1 flex flex-col overflow-auto">
       <PersonaQuiz
         @back="goBack"
       />
     </div>
 
-    <!-- Prompt Manager -->
-    <div v-if="activeTab === 'prompt-manager'" class="flex-1 overflow-auto">
+    <div v-if="activeTab === 'prompt-manager'" class="flex-1 flex flex-col overflow-auto">
       <PromptManager
         @back="goBack"
       />
     </div>
 
-    <!-- Log Viewer -->
-    <div v-if="activeTab === 'log-viewer'" class="flex-1 overflow-auto">
+    <div v-if="activeTab === 'log-viewer'" class="flex-1 flex flex-col overflow-auto">
       <LogViewer
         @back="goBack"
       />
     </div>
 
-    <!-- Evolution Test -->
-    <div v-if="activeTab === 'evolution-test'" class="flex-1 overflow-auto">
-      <div class="p-4">
-        <button
-          @click="goBack"
-          class="mb-4 flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 transition-colors"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path d="M15 19l-7-7 7-7"></path>
-          </svg>
-          返回
-        </button>
-        <EvolutionTest />
-      </div>
+    <div v-if="activeTab === 'evolution-test'" class="flex-1 flex flex-col overflow-auto">
+      <EvolutionTest @back="goBack" />
+    </div>
+
+    <div v-if="activeTab === 'diagnostic-test'" class="flex-1 flex flex-col overflow-auto">
+      <DiagnosticTest @back="goBack" />
     </div>
   </div>
 </template>

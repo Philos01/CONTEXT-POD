@@ -2,667 +2,830 @@
 import { ref, onMounted } from 'vue';
 import { useContactStore } from '@/stores/contactStore';
 import { useAppStore } from '@/stores/appStore';
-import { getPersona, savePersona } from '@/services/personaService';
-import { 
-  getBufferByContact, 
-  getUnprocessedCount, 
-  updateBufferEntry, 
-  deleteBufferEntry,
+import type { Contact } from '@/types';
+import {
+  getBufferByContact,
+  getPendingCountsByContact,
   triggerPersonaUpdate,
-  getEvolutionStatus,
-  onEvolutionStatusChange,
-  EVOLUTION_THRESHOLD,
+  deleteBufferEntry,
   type ChatBufferEntry,
-  type EvolutionStatus
 } from '@/services/evolutionEngine';
-import type { StylePersona } from '@/types';
-
-const emit = defineEmits<{
-  back: [];
-  'open-extractor': [contactName: string];
-}>();
+import { getDynamicPersona, saveDynamicPersona, type DynamicPersonaSchema } from '@/services/personaService';
 
 const contactStore = useContactStore();
 const appStore = useAppStore();
 
-const newName = ref('');
-const newPersonality = ref('');
-const newTags = ref('');
-const showForm = ref(false);
-const editingContactId = ref<string | null>(null);
-const editingName = ref('');
-const editingPersonality = ref('');
-const editingTags = ref('');
-const expandedPersona = ref<string | null>(null);
-const expandedBuffer = ref<string | null>(null);
-const editingPersona = ref<StylePersona | null>(null);
-const personaMap = ref<Record<string, StylePersona>>({});
-const bufferEntries = ref<Record<string, ChatBufferEntry[]>>({});
-const bufferCounts = ref<Record<string, number>>({});
-const evolutionStatus = ref<EvolutionStatus>(getEvolutionStatus());
-const isEvolving = ref<Record<string, boolean>>({});
-const editingEntryId = ref<string | null>(null);
-const editingContent = ref('');
+const contacts = ref<Contact[]>([]);
+const searchQuery = ref('');
+const showAddForm = ref(false);
+const newContactName = ref('');
+const newContactPersonality = ref('');
+const newContactIdentity = ref('');
+const editingId = ref<string | null>(null);
+const editName = ref('');
+const editPersonality = ref('');
+const editIdentity = ref('');
+const expandedContactId = ref<string | null>(null);
+const bufferExpandedContactId = ref<string | null>(null);
+const contactBuffers = ref<Record<string, ChatBufferEntry[]>>({});
+const isUpdatingPersona = ref<string | null>(null);
+const isEditingPersona = ref<string | null>(null);
+const editingPersonaData = ref<DynamicPersonaSchema | null>(null);
 
-onMounted(() => {
-  for (const contact of contactStore.contacts) {
-    const persona = getPersona(contact.name);
-    if (persona) {
-      personaMap.value[contact.name] = persona;
-    }
-    
-    // 加载缓冲区数据
-    loadBufferForContact(contact.name);
-  }
-  
-  onEvolutionStatusChange((status) => {
-    evolutionStatus.value = status;
-    if (!status.isEvolving) {
-      for (const name in isEvolving.value) {
-        isEvolving.value[name] = false;
-      }
-      // 刷新缓冲区数据
-      for (const contact of contactStore.contacts) {
-        loadBufferForContact(contact.name);
-      }
-    }
-  });
+onMounted(async () => {
+  await contactStore.initDb();
+  contacts.value = contactStore.contacts;
+  loadAllBuffers();
 });
 
+function loadAllBuffers() {
+  const pendingCounts = getPendingCountsByContact();
+  for (const contact of contacts.value) {
+    if (pendingCounts[contact.name] > 0) {
+      contactBuffers.value[contact.name] = getBufferByContact(contact.name);
+    }
+  }
+}
+
 function loadBufferForContact(contactName: string) {
-  bufferEntries.value[contactName] = getBufferByContact(contactName);
-  bufferCounts.value[contactName] = getUnprocessedCount(contactName);
+  contactBuffers.value[contactName] = getBufferByContact(contactName);
 }
 
-function refreshAllBufferCounts() {
-  for (const contact of contactStore.contacts) {
-    loadBufferForContact(contact.name);
+async function refreshContacts() {
+  contacts.value = [...contactStore.contacts];
+}
+
+async function addContact() {
+  if (!newContactName.value.trim()) return;
+
+  await contactStore.addContact(
+    newContactName.value.trim(),
+    newContactPersonality.value.trim() || '待观察',
+    []
+  );
+
+  if (newContactIdentity.value.trim()) {
+    const contacts = contactStore.contacts;
+    const newContact = contacts[contacts.length - 1];
+    if (newContact) {
+      await contactStore.updateContact(newContact.id, {
+        identity: newContactIdentity.value.trim(),
+      });
+    }
   }
+
+  newContactName.value = '';
+  newContactPersonality.value = '';
+  newContactIdentity.value = '';
+  showAddForm.value = false;
+  await refreshContacts();
 }
 
-async function handleAddContact() {
-  if (!newName.value.trim() || !newPersonality.value.trim()) return;
+async function deleteContact(id: string) {
+  if (!confirm('确定要删除这个联系人吗？')) return;
 
-  const tags = newTags.value
-    .split(/[,，\s]+/)
-    .map((t) => t.trim())
-    .filter(Boolean);
-
-  await contactStore.addContact(newName.value.trim(), newPersonality.value.trim(), tags);
-
-  newName.value = '';
-  newPersonality.value = '';
-  newTags.value = '';
-  showForm.value = false;
+  await contactStore.removeContact(id);
+  await refreshContacts();
 }
 
-function handleRemove(id: string) {
-  contactStore.removeContact(id);
-}
+async function updateContact(id: string) {
+  if (!editName.value.trim()) return;
 
-function startEditContact(contact: { id: string; name: string; personality: string; tags: string[] }) {
-  editingContactId.value = contact.id;
-  editingName.value = contact.name;
-  editingPersonality.value = contact.personality;
-  editingTags.value = contact.tags.join(', ');
-}
-
-function saveEditContact(id: string) {
-  const contact = contactStore.contacts.find(c => c.id === id);
-  const oldName = contact?.name || '';
-  const newName = editingName.value.trim();
-  
-  console.log(`[ContactManager] Renaming contact from "${oldName}" to "${newName}"`);
-  
-  const tags = editingTags.value
-    .split(/[,，\s]+/)
-    .map((t) => t.trim())
-    .filter(Boolean);
-  contactStore.updateContact(id, {
-    name: newName,
-    personality: editingPersonality.value.trim(),
-    tags,
+  await contactStore.updateContact(id, {
+    name: editName.value.trim(),
+    personality: editPersonality.value.trim(),
+    identity: editIdentity.value.trim(),
   });
-  
-  // 如果名字发生了变化，刷新当前页面的数据
-  if (oldName && oldName !== newName) {
-    console.log(`[ContactManager] Name changed, refreshing data`);
-    
-    // 重新初始化 personaMap
-    for (const c of contactStore.contacts) {
-      const persona = getPersona(c.name);
-      if (persona) {
-        personaMap.value[c.name] = persona;
-      }
-    }
-    // 删除旧名字的条目
-    if (personaMap.value[oldName]) {
-      delete personaMap.value[oldName];
-    }
-    
-    // 刷新缓冲区数据
-    refreshAllBufferCounts();
-  }
-  
-  editingContactId.value = null;
+
+  editingId.value = null;
+  editName.value = '';
+  editPersonality.value = '';
+  editIdentity.value = '';
+  await refreshContacts();
+}
+
+function startEdit(contact: Contact) {
+  editingId.value = contact.id;
+  editName.value = contact.name;
+  editPersonality.value = contact.personality || '';
+  editIdentity.value = (contact as any).identity || '';
 }
 
 function cancelEdit() {
-  editingContactId.value = null;
+  editingId.value = null;
+  editName.value = '';
+  editPersonality.value = '';
+  editIdentity.value = '';
 }
 
-function togglePersona(name: string) {
-  if (expandedPersona.value === name) {
-    expandedPersona.value = null;
-    editingPersona.value = null;
+function toggleExpand(contactId: string) {
+  expandedContactId.value = expandedContactId.value === contactId ? null : contactId;
+}
+
+function toggleBufferExpand(contactName: string) {
+  if (bufferExpandedContactId.value === contactName) {
+    bufferExpandedContactId.value = null;
   } else {
-    expandedPersona.value = name;
-    const persona = getPersona(name);
-    editingPersona.value = persona ? { ...persona, catchphrases: [...persona.catchphrases] } : null;
-  }
-}
-
-function toggleBuffer(name: string) {
-  if (expandedBuffer.value === name) {
-    expandedBuffer.value = null;
-    editingEntryId.value = null;
-  } else {
-    expandedBuffer.value = name;
-    loadBufferForContact(name);
-  }
-}
-
-function startEditPersona(name: string) {
-  const persona = getPersona(name);
-  if (persona) {
-    editingPersona.value = { ...persona, catchphrases: [...persona.catchphrases] };
-  }
-}
-
-function savePersonaEdit(name: string) {
-  if (editingPersona.value) {
-    savePersona(name, editingPersona.value);
-    personaMap.value[name] = editingPersona.value;
-    expandedPersona.value = null;
-    editingPersona.value = null;
-  }
-}
-
-function cancelPersonaEdit() {
-  editingPersona.value = null;
-}
-
-function addCatchphrase() {
-  if (editingPersona.value) {
-    editingPersona.value.catchphrases.push('');
-  }
-}
-
-function removeCatchphrase(index: number) {
-  if (editingPersona.value) {
-    editingPersona.value.catchphrases.splice(index, 1);
-  }
-}
-
-function deletePersona(name: string) {
-  const personas = JSON.parse(localStorage.getItem('context-pod-personas') || '{}');
-  delete personas[name];
-  localStorage.setItem('context-pod-personas', JSON.stringify(personas));
-  delete personaMap.value[name];
-  expandedPersona.value = null;
-  editingPersona.value = null;
-}
-
-// 缓冲区编辑功能
-function startEditEntry(entry: ChatBufferEntry) {
-  editingEntryId.value = entry.id;
-  editingContent.value = entry.content;
-}
-
-function saveEditEntry(entry: ChatBufferEntry) {
-  if (updateBufferEntry(entry.id, editingContent.value)) {
-    loadBufferForContact(entry.contactName);
-  }
-  editingEntryId.value = null;
-}
-
-function cancelEditEntry() {
-  editingEntryId.value = null;
-}
-
-function handleDeleteEntry(entry: ChatBufferEntry) {
-  if (deleteBufferEntry(entry.id)) {
-    loadBufferForContact(entry.contactName);
-  }
-}
-
-async function handleManualEvolution(contactName: string) {
-  if (evolutionStatus.value.isEvolving) return;
-  
-  isEvolving.value[contactName] = true;
-  
-  try {
-    const result = await triggerPersonaUpdate(contactName, appStore.settings, true);
-    
-    if (result.success && result.persona) {
-      personaMap.value[contactName] = result.persona;
-      alert(`✅ 成功进化 "${contactName}" 的风格画像！\n处理了 ${result.processedCount} 条消息`);
-    } else {
-      alert(`❌ 进化失败，请检查是否有足够的缓冲区消息`);
-    }
-  } catch (error) {
-    console.error('[Context-Pod] Manual evolution failed:', error);
-    alert('❌ 进化过程中发生错误');
-  } finally {
-    isEvolving.value[contactName] = false;
+    bufferExpandedContactId.value = contactName;
     loadBufferForContact(contactName);
   }
 }
 
-function formatTime(timestamp: number): string {
-  const date = new Date(timestamp);
-  return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+function getPersonaForContact(contactName: string) {
+  return getDynamicPersona(contactName);
 }
 
-defineExpose({
-  refreshAllBufferCounts,
-});
+function hasPersonaData(contactName: string): boolean {
+  const persona = getDynamicPersona(contactName);
+  if (!persona) return false;
+  const hasPowerIdentity = !!(persona.powerIdentity && persona.powerIdentity.length > 0);
+  const hasPsychologicalNeeds = !!(persona.psychologicalNeeds && persona.psychologicalNeeds.length > 0);
+  const hasTaboos = !!(persona.taboos && persona.taboos.length > 0);
+  const hasTemperature = !!(persona.temperature && persona.temperature > 0);
+  return hasPowerIdentity || hasPsychologicalNeeds || hasTaboos || hasTemperature;
+ }
+
+async function updatePersonality(contactName: string) {
+  if (!appStore.isConfigured) {
+    alert('请先在设置中配置 API Key');
+    return;
+  }
+
+  isUpdatingPersona.value = contactName;
+  
+  try {
+    const result = await triggerPersonaUpdate(contactName, appStore.settings, true);
+    
+    if (result.success) {
+      alert(`✅ 风格更新成功！\n\n已处理 ${result.processedCount} 条对话记录。\n\n${result.dynamicPersona?.summary || ''}`);
+      loadBufferForContact(contactName);
+    } else {
+      const bufferCount = getBufferByContact(contactName).length;
+      alert(`⚠️ 更新条件不足\n\n需要至少 1 条对话记录，当前有 ${bufferCount} 条。\n\n请先在主界面使用"添加自己的回复"功能来积累对话。`);
+    }
+  } catch (error) {
+    alert(`❌ 更新失败: ${error}`);
+  } finally {
+    isUpdatingPersona.value = null;
+  }
+}
+
+function clearContactBuffer(contactName: string) {
+  if (!confirm(`确定要清除 ${contactName} 的所有对话缓存吗？`)) return;
+  
+  const buffer = getBufferByContact(contactName);
+  const ids = buffer.map(e => e.id);
+  
+  for (const id of ids) {
+    deleteBufferEntry(id);
+  }
+  
+  loadBufferForContact(contactName);
+  alert('对话缓存已清除');
+}
+
+function getPendingCount(contactName: string): number {
+  const counts = getPendingCountsByContact();
+  return counts[contactName] || 0;
+}
+
+function startEditPersona(contactName: string) {
+  const persona = getDynamicPersona(contactName);
+  if (!persona) {
+    editingPersonaData.value = {
+      targetId: contactName,
+      updateTick: 0,
+      powerIdentity: [{ trait: '待补充', confidence: 0.5 }],
+      psychologicalNeeds: [{ need: '待补充', weight: 0.5 }],
+      taboos: [{ rule: '待补充', riskFactor: 0.5 }],
+      temperature: 5,
+      textStyle: '待补充',
+      experienceEvents: [],
+      summary: '待补充',
+      sampleCount: 0,
+      updatedAt: Date.now(),
+    };
+  } else {
+    editingPersonaData.value = JSON.parse(JSON.stringify(persona));
+  }
+  isEditingPersona.value = contactName;
+}
+
+function cancelEditPersona() {
+  isEditingPersona.value = null;
+  editingPersonaData.value = null;
+}
+
+function savePersonaEdit(contactName: string) {
+  if (!editingPersonaData.value) return;
+  
+  editingPersonaData.value.updatedAt = Date.now();
+  saveDynamicPersona(contactName, editingPersonaData.value);
+  isEditingPersona.value = null;
+  editingPersonaData.value = null;
+}
+
+function addPersonaTrait(type: 'powerIdentity' | 'psychologicalNeeds' | 'taboos') {
+  if (!editingPersonaData.value) return;
+  
+  if (type === 'powerIdentity') {
+    editingPersonaData.value.powerIdentity.push({ trait: '', confidence: 0.5 });
+  } else if (type === 'psychologicalNeeds') {
+    editingPersonaData.value.psychologicalNeeds.push({ need: '', weight: 0.5 });
+  } else {
+    editingPersonaData.value.taboos.push({ rule: '', riskFactor: 0.5 });
+  }
+}
+
+function removePersonaTrait(type: 'powerIdentity' | 'psychologicalNeeds' | 'taboos', index: number) {
+  if (!editingPersonaData.value) return;
+  
+  if (type === 'powerIdentity') {
+    editingPersonaData.value.powerIdentity.splice(index, 1);
+  } else if (type === 'psychologicalNeeds') {
+    editingPersonaData.value.psychologicalNeeds.splice(index, 1);
+  } else {
+    editingPersonaData.value.taboos.splice(index, 1);
+  }
+}
+
+function formatTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleString('zh-CN', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function getTagColor(tag: string): string {
+  const colors = [
+    'rgba(139, 115, 85, 0.08)',
+    'rgba(59, 130, 246, 0.08)',
+    'rgba(34, 197, 94, 0.08)',
+    'rgba(234, 179, 8, 0.08)',
+    'rgba(168, 85, 247, 0.08)',
+  ];
+
+  let hash = 0;
+  for (let i = 0; i < tag.length; i++) {
+    hash = tag.charCodeAt(i) + ((hash << 5) - hash);
+  }
+
+  return colors[Math.abs(hash) % colors.length];
+}
 </script>
 
 <template>
-  <div class="p-4">
-    <div class="flex items-center justify-between mb-4">
-      <button @click="emit('back')" class="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">
+  <div class="px-5 py-5 flex-1 flex flex-col">
+    <div class="flex gap-2 mb-4">
+      <input
+        v-model="searchQuery"
+        type="text"
+        placeholder="搜索联系人..."
+        class="input-field flex-1"
+      />
+      <button
+        @click="showAddForm = !showAddForm"
+        class="btn-primary"
+      >
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+          <path v-if="!showAddForm" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4v16m8-8H4" />
+          <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 12H4" />
         </svg>
-        返回
+        {{ showAddForm ? '收起' : '添加' }}
       </button>
-      <h3 class="text-sm font-medium text-gray-700">联系人管理</h3>
-      <span class="text-xs text-gray-400">{{ contactStore.contactCount }} 人</span>
     </div>
 
-    <!-- Add Button -->
-    <button
-      v-if="!showForm"
-      @click="showForm = true"
-      class="w-full py-2.5 border-2 border-dashed border-gray-200 rounded-xl text-sm text-gray-400 hover:text-gray-600 hover:border-gray-300 transition-colors"
-    >
-      + 添加联系人
-    </button>
-
-    <!-- Add Form -->
-    <div v-if="showForm" class="mb-4 p-3 bg-white/50 rounded-xl space-y-2">
+    <div v-if="showAddForm" class="p-4 rounded-xl mb-4 space-y-3" style="background: var(--bg-secondary); border: 1px solid var(--border-light);">
       <input
-        v-model="newName"
+        v-model="newContactName"
         type="text"
-        placeholder="联系人姓名"
-        class="w-full px-3 py-2 text-sm bg-white/80 rounded-lg border border-gray-200 focus:outline-none focus:border-blue-400"
+        placeholder="联系人名称"
+        class="input-field"
+      />
+      <input
+        v-model="newContactIdentity"
+        type="text"
+        placeholder="身份背景（可选）例：相亲对象、客户、同事、多年老友"
+        class="input-field"
       />
       <textarea
-        v-model="newPersonality"
-        placeholder="性格特点描述（如：脾气急躁，爱画大饼，喜欢被夸）"
-        rows="2"
-        class="w-full px-3 py-2 text-sm bg-white/80 rounded-lg border border-gray-200 focus:outline-none focus:border-blue-400 resize-none"
-      ></textarea>
-      <input
-        v-model="newTags"
+        v-model="newContactPersonality"
         type="text"
-        placeholder="标签（逗号分隔，如：领导, 急躁）"
-        class="w-full px-3 py-2 text-sm bg-white/80 rounded-lg border border-gray-200 focus:outline-none focus:border-blue-400"
-      />
-      <div class="flex gap-2">
-        <button
-          @click="handleAddContact"
-          class="flex-1 py-2 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-        >
-          保存
-        </button>
-        <button
-          @click="showForm = false"
-          class="flex-1 py-2 text-sm bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors"
-        >
-          取消
-        </button>
-      </div>
+        placeholder="性格描述（可选）例：内向、喜欢开玩笑、控制欲强"
+        class="input-field resize-none"
+        rows="2"
+      ></textarea>
+      <button
+        @click="addContact"
+        class="btn-primary w-full"
+      >
+        添加联系人
+      </button>
     </div>
 
-    <!-- Contact List -->
-    <div class="space-y-2 max-h-[450px] overflow-y-auto">
+    <div class="flex-1 overflow-y-auto">
       <div
-        v-for="contact in contactStore.contacts"
+        v-for="contact in contacts"
         :key="contact.id"
-        class="bg-white/50 rounded-xl group"
+        class="mb-3"
       >
-        <!-- Normal View -->
-        <div v-if="editingContactId !== contact.id" class="p-3">
-          <div class="flex items-start justify-between">
+        <div
+          class="p-4 rounded-2xl transition-all"
+          style="background: var(--bg-secondary); border: 1px solid var(--border-light);"
+        >
+          <div v-if="editingId !== contact.id" class="flex items-start justify-between">
             <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-1.5">
-                <p class="text-sm font-medium text-gray-800">{{ contact.name }}</p>
-                <span v-if="personaMap[contact.name]" class="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-600 rounded-full">🎭 有风格</span>
+              <div class="flex items-center gap-2">
+                <p class="text-sm font-medium" style="color: var(--text-primary);">{{ contact.name }}</p>
+                <span
+                  v-if="(contact as any).identity"
+                  class="text-[10px] px-2 py-0.5 rounded-lg"
+                  style="background: rgba(139, 115, 85, 0.08); color: var(--accent-warm);"
+                >
+                  {{ (contact as any).identity }}
+                </span>
+                <span
+                  v-if="getPendingCount(contact.name) > 0"
+                  class="text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1"
+                  style="background: rgba(139, 115, 85, 0.12); color: var(--accent-warm);"
+                >
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  {{ getPendingCount(contact.name) }}条缓存
+                </span>
               </div>
-              <p class="text-xs text-gray-500 mt-0.5 line-clamp-2">{{ contact.personality }}</p>
-              <div v-if="contact.tags.length" class="flex flex-wrap gap-1 mt-1.5">
+              <p v-if="contact.personality" class="text-xs mt-0.5 truncate" style="color: var(--text-tertiary);">
+                {{ contact.personality }}
+              </p>
+              <div v-if="contact.tags && contact.tags.length > 0" class="flex flex-wrap gap-1.5 mt-2">
                 <span
                   v-for="tag in contact.tags"
                   :key="tag"
-                  class="px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded text-[10px]"
+                  class="text-[10px] px-2 py-0.5 rounded-lg"
+                  :style="{ background: getTagColor(tag), color: 'var(--text-secondary)' }"
                 >
                   {{ tag }}
                 </span>
               </div>
             </div>
-            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div class="flex gap-1 ml-3">
               <button
-                @click="startEditContact(contact)"
-                class="p-1 text-gray-300 hover:text-blue-400 transition-colors"
-                title="编辑"
+                @click="toggleExpand(contact.id)"
+                class="icon-btn"
+                :class="expandedContactId === contact.id ? 'text-[var(--accent-warm)]' : ''"
+                title="查看详情"
               >
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                <svg class="w-4 h-4 transition-transform" :class="expandedContactId === contact.id ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7" />
                 </svg>
               </button>
               <button
-                @click="handleRemove(contact.id)"
-                class="p-1 text-gray-300 hover:text-red-400 transition-colors"
+                @click="startEdit(contact)"
+                class="icon-btn"
+                title="编辑"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
+              <button
+                @click="deleteContact(contact.id)"
+                class="icon-btn text-red-400 hover:text-red-600 hover:bg-red-50"
                 title="删除"
               >
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
               </button>
             </div>
           </div>
 
-          <!-- Persona Toggle -->
-          <button
-            @click="togglePersona(contact.name)"
-            class="mt-2 w-full text-left px-2 py-1.5 text-xs rounded-lg transition-colors"
-            :class="expandedPersona === contact.name ? 'bg-amber-50 text-amber-600' : 'bg-gray-50 text-gray-400 hover:bg-gray-100'"
-          >
-            <span v-if="personaMap[contact.name]">
-              {{ expandedPersona === contact.name ? '▼ 收起风格画像' : '▶ 查看风格画像' }}
-            </span>
-            <span v-else class="text-gray-300">
-              未提取风格 · 点击 🎭提取风格 添加
-            </span>
-          </button>
-
-          <!-- Buffer Toggle -->
-          <button
-            @click="toggleBuffer(contact.name)"
-            class="mt-1 w-full text-left px-2 py-1.5 text-xs rounded-lg transition-colors"
-            :class="[expandedBuffer === contact.name ? 'bg-blue-50 text-blue-600' : 'bg-gray-50 text-gray-400 hover:bg-gray-100', bufferCounts[contact.name] > 0 ? '' : 'opacity-60']"
-          >
-            <span>
-              {{ expandedBuffer === contact.name ? '▼ 收起缓冲区' : '▶ 聊天缓冲区' }}
-              <span v-if="bufferCounts[contact.name] > 0" :class="bufferCounts[contact.name] >= EVOLUTION_THRESHOLD ? 'ml-1 px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded-full text-[10px]' : 'ml-1 text-blue-400'">
-                {{ bufferCounts[contact.name] }}条{{ bufferCounts[contact.name] >= EVOLUTION_THRESHOLD ? ' · 可进化' : '' }}
-              </span>
-              <span v-else-if="!expandedBuffer" class="ml-1 text-gray-300">(空)</span>
-            </span>
-          </button>
-
-          <!-- Persona Display / Edit -->
-          <div v-if="expandedPersona === contact.name" class="mt-2">
-            <!-- View Mode -->
-            <div v-if="!editingPersona && personaMap[contact.name]" class="p-2.5 bg-amber-50 rounded-lg border border-amber-200 space-y-1.5">
-              <div v-for="(value, key) in { '断句排版': personaMap[contact.name].sentenceStyle, '情绪风格': personaMap[contact.name].emotionLevel, '词汇特征': personaMap[contact.name].vocabFeatures, '标点习惯': personaMap[contact.name].punctuationHabits }" :key="key">
-                <span class="text-[10px] font-medium text-amber-600">{{ key }}：</span>
-                <span class="text-[10px] text-amber-500">{{ value }}</span>
-              </div>
-              <div>
-                <span class="text-[10px] font-medium text-amber-600">口癖语气：</span>
-                <span class="text-[10px] text-amber-500">{{ personaMap[contact.name].catchphrases.join('、') || '无' }}</span>
-              </div>
-              <div class="pt-1 border-t border-amber-200">
-                <span class="text-[10px] font-medium text-amber-600">风格总结：</span>
-                <span class="text-[10px] text-amber-500">{{ personaMap[contact.name].summary }}</span>
-              </div>
-              <div class="flex gap-1.5 pt-1">
-                <button
-                  @click="startEditPersona(contact.name)"
-                  class="flex-1 py-1.5 text-[10px] bg-amber-100 text-amber-600 rounded hover:bg-amber-200 transition-colors"
-                >
-                  ✏️ 编辑
-                </button>
-                <button
-                  @click="deletePersona(contact.name)"
-                  class="py-1.5 px-2 text-[10px] bg-red-50 text-red-400 rounded hover:bg-red-100 transition-colors"
-                >
-                  🗑️ 删除
-                </button>
-              </div>
+          <div v-else class="space-y-3">
+            <input
+              v-model="editName"
+              type="text"
+              placeholder="联系人名称"
+              class="input-field"
+            />
+            <input
+              v-model="editIdentity"
+              type="text"
+              placeholder="身份背景（可选）例：相亲对象、客户、同事、多年老友"
+              class="input-field"
+            />
+            <textarea
+              v-model="editPersonality"
+              type="text"
+              placeholder="性格描述"
+              class="input-field resize-none"
+              rows="2"
+            ></textarea>
+            <div class="flex gap-2">
+              <button @click="cancelEdit" class="btn-secondary flex-1">取消</button>
+              <button @click="updateContact(contact.id)" class="btn-primary flex-1">保存</button>
             </div>
+          </div>
 
-            <!-- Edit Mode -->
-            <div v-if="editingPersona" class="p-2.5 bg-amber-50 rounded-lg border border-amber-200 space-y-2">
-              <div>
-                <label class="text-[10px] font-medium text-amber-600 block mb-0.5">断句排版</label>
-                <input
-                  v-model="editingPersona.sentenceStyle"
-                  class="w-full px-2 py-1 text-xs border border-amber-200 rounded focus:outline-none focus:ring-1 focus:ring-amber-300"
-                />
-              </div>
-              <div>
-                <label class="text-[10px] font-medium text-amber-600 block mb-0.5">情绪风格</label>
-                <input
-                  v-model="editingPersona.emotionLevel"
-                  class="w-full px-2 py-1 text-xs border border-amber-200 rounded focus:outline-none focus:ring-1 focus:ring-amber-300"
-                />
-              </div>
-              <div>
-                <label class="text-[10px] font-medium text-amber-600 block mb-0.5">词汇特征</label>
-                <input
-                  v-model="editingPersona.vocabFeatures"
-                  class="w-full px-2 py-1 text-xs border border-amber-200 rounded focus:outline-none focus:ring-1 focus:ring-amber-300"
-                />
-              </div>
-              <div>
-                <label class="text-[10px] font-medium text-amber-600 block mb-0.5">标点习惯</label>
-                <input
-                  v-model="editingPersona.punctuationHabits"
-                  class="w-full px-2 py-1 text-xs border border-amber-200 rounded focus:outline-none focus:ring-1 focus:ring-amber-300"
-                />
-              </div>
-              <div>
-                <label class="text-[10px] font-medium text-amber-600 block mb-0.5">口癖语气</label>
-                <div class="space-y-1">
-                  <div v-for="(_, index) in editingPersona.catchphrases" :key="index" class="flex gap-1">
-                    <input
-                      v-model="editingPersona.catchphrases[index]"
-                      class="flex-1 px-2 py-1 text-xs border border-amber-200 rounded focus:outline-none focus:ring-1 focus:ring-amber-300"
-                    />
-                    <button
-                      @click="removeCatchphrase(index)"
-                      class="px-1.5 text-xs text-red-400 hover:text-red-600"
-                    >
-                      ×
-                    </button>
-                  </div>
+          <div v-if="expandedContactId === contact.id" class="mt-4 pt-4 space-y-4" style="border-top: 1px solid var(--border-light);">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <p class="text-xs font-medium" style="color: var(--text-secondary);">
+                  <svg class="w-3.5 h-3.5 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  对话缓存
+                  <span v-if="getPendingCount(contact.name) > 0" class="ml-1 text-[var(--accent-warm)]">({{ getPendingCount(contact.name) }}条)</span>
+                </p>
+                <div class="flex gap-1">
                   <button
-                    @click="addCatchphrase"
-                    class="text-[10px] text-amber-500 hover:text-amber-700"
+                    @click="toggleBufferExpand(contact.name)"
+                    class="icon-btn text-xs px-2 py-1"
                   >
-                    + 添加口癖
+                    {{ bufferExpandedContactId === contact.name ? '收起' : '展开' }}
+                  </button>
+                  <button
+                    v-if="getPendingCount(contact.name) > 0"
+                    @click="clearContactBuffer(contact.name)"
+                    class="icon-btn text-xs px-2 py-1 text-red-400 hover:text-red-600"
+                  >
+                    清除
                   </button>
                 </div>
               </div>
-              <div>
-                <label class="text-[10px] font-medium text-amber-600 block mb-0.5">风格总结</label>
-                <textarea
-                  v-model="editingPersona.summary"
-                  rows="2"
-                  class="w-full px-2 py-1 text-xs border border-amber-200 rounded focus:outline-none focus:ring-1 focus:ring-amber-300 resize-none"
-                ></textarea>
-              </div>
-              <div class="flex gap-1.5">
-                <button
-                  @click="savePersonaEdit(contact.name)"
-                  class="flex-1 py-1.5 text-[10px] bg-amber-500 text-white rounded hover:bg-amber-600 transition-colors"
-                >
-                  💾 保存修改
-                </button>
-                <button
-                  @click="cancelPersonaEdit"
-                  class="flex-1 py-1.5 text-[10px] bg-gray-100 text-gray-500 rounded hover:bg-gray-200 transition-colors"
-                >
-                  取消
-                </button>
-              </div>
-            </div>
-          </div>
 
-          <!-- Buffer Display / Edit -->
-          <div v-if="expandedBuffer === contact.name" class="mt-2">
-            <div class="p-2.5 bg-blue-50 rounded-lg border border-blue-200 space-y-2">
-              <!-- Header with manual trigger button -->
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <span class="text-[10px] font-medium text-blue-600">
-                    缓冲区内容 ({{ bufferCounts[contact.name] || 0 }}条)
-                  </span>
-                  <span v-if="(bufferCounts[contact.name] || 0) >= EVOLUTION_THRESHOLD" class="text-[10px] px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded-full">
-                    可自动进化
-                  </span>
-                </div>
-                <button
-                  @click="handleManualEvolution(contact.name)"
-                  :disabled="evolutionStatus.isEvolving || isEvolving[contact.name] || (bufferCounts[contact.name] || 0) === 0"
-                  class="py-1 px-2 text-[10px] rounded transition-colors"
-                  :class="(bufferCounts[contact.name] || 0) > 0 ? 'bg-purple-500 text-white hover:bg-purple-600' : 'bg-gray-200 text-gray-400 cursor-not-allowed'"
-                >
-                  <span v-if="isEvolving[contact.name]" class="inline-flex items-center gap-1">
-                    <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    进化中...
-                  </span>
-                  <span v-else>🧬 手动进化</span>
-                </button>
-              </div>
-
-              <!-- Empty State -->
-              <div v-if="!(bufferEntries[contact.name]?.length)" class="text-center py-3">
-                <p class="text-[10px] text-gray-400">暂无缓冲区消息</p>
-                <p class="text-[10px] text-gray-300 mt-0.5">捕获聊天后，消息会自动存入此处</p>
-              </div>
-
-              <!-- Buffer Entries List -->
-              <div v-else class="space-y-1.5 max-h-[150px] overflow-y-auto">
+              <div v-if="bufferExpandedContactId === contact.name" class="space-y-2 max-h-40 overflow-y-auto">
                 <div
-                  v-for="entry in bufferEntries[contact.name]"
+                  v-for="entry in contactBuffers[contact.name]"
                   :key="entry.id"
-                  class="p-1.5 bg-white/70 rounded border border-blue-100 group"
+                  class="p-2 rounded-lg text-xs"
+                  :style="{ background: entry.role === 'partner' ? 'rgba(139, 115, 85, 0.06)' : 'rgba(59, 130, 246, 0.06)' }"
                 >
-                  <!-- View Mode -->
-                  <div v-if="editingEntryId !== entry.id" class="flex items-start justify-between gap-1">
-                    <div class="flex-1 min-w-0">
-                      <div class="flex items-center gap-1 mb-0.5">
-                        <span class="text-[9px] px-1 py-0.25 rounded" :class="entry.role === 'partner' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-500'">
-                          {{ entry.role === 'partner' ? contact.name : '我' }}
-                        </span>
-                        <span class="text-[9px] text-gray-400">{{ formatTime(entry.timestamp) }}</span>
-                      </div>
-                      <p class="text-[10px] text-gray-700 line-clamp-2 break-all">{{ entry.content }}</p>
-                    </div>
-                    <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                      <button
-                        @click="startEditEntry(entry)"
-                        class="p-0.5 text-gray-300 hover:text-blue-400 transition-colors"
-                        title="编辑"
-                      >
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                        </svg>
-                      </button>
-                      <button
-                        @click="handleDeleteEntry(entry)"
-                        class="p-0.5 text-gray-300 hover:text-red-400 transition-colors"
-                        title="删除"
-                      >
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="font-medium" :style="{ color: entry.role === 'partner' ? 'var(--accent-warm)' : '#3b82f6' }">
+                      {{ entry.role === 'partner' ? contact.name : '我' }}
+                    </span>
+                    <span style="color: var(--text-tertiary);">{{ formatTime(entry.timestamp) }}</span>
                   </div>
-
-                  <!-- Edit Mode -->
-                  <div v-else class="space-y-1">
-                    <textarea
-                      v-model="editingContent"
-                      rows="2"
-                      class="w-full px-2 py-1 text-[10px] border border-blue-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-300 resize-none"
-                    ></textarea>
-                    <div class="flex gap-1 justify-end">
-                      <button
-                        @click="saveEditEntry(entry)"
-                        class="px-2 py-0.5 text-[9px] bg-blue-500 text-white rounded hover:bg-blue-600"
-                      >
-                        保存
-                      </button>
-                      <button
-                        @click="cancelEditEntry()"
-                        class="px-2 py-0.5 text-[9px] bg-gray-100 text-gray-500 rounded hover:bg-gray-200"
-                      >
-                        取消
-                      </button>
-                    </div>
-                  </div>
+                  <p class="truncate" style="color: var(--text-secondary);">{{ entry.content }}</p>
                 </div>
-              </div>
-
-              <!-- Evolution Info -->
-              <div class="pt-1.5 border-t border-blue-200">
-                <p class="text-[9px] text-gray-400">
-                  自动进化阈值：{{ EVOLUTION_THRESHOLD }}条 · 当前：{{ bufferCounts[contact.name] || 0 }}条
+                <p v-if="!contactBuffers[contact.name] || contactBuffers[contact.name].length === 0" class="text-xs text-center py-2" style="color: var(--text-tertiary);">
+                  暂无缓存数据
                 </p>
               </div>
             </div>
-          </div>
-        </div>
 
-        <!-- Edit Contact View -->
-        <div v-else class="p-3 space-y-2">
-          <input
-            v-model="editingName"
-            type="text"
-            class="w-full px-3 py-1.5 text-sm bg-white/80 rounded-lg border border-gray-200 focus:outline-none focus:border-blue-400"
-          />
-          <textarea
-            v-model="editingPersonality"
-            rows="2"
-            class="w-full px-3 py-1.5 text-sm bg-white/80 rounded-lg border border-gray-200 focus:outline-none focus:border-blue-400 resize-none"
-          ></textarea>
-          <input
-            v-model="editingTags"
-            type="text"
-            placeholder="标签（逗号分隔）"
-            class="w-full px-3 py-1.5 text-sm bg-white/80 rounded-lg border border-gray-200 focus:outline-none focus:border-blue-400"
-          />
-          <div class="flex gap-2">
-            <button
-              @click="saveEditContact(contact.id)"
-              class="flex-1 py-1.5 text-xs bg-blue-500 text-white rounded-lg hover:bg-blue-600"
-            >
-              保存
-            </button>
-            <button
-              @click="cancelEdit"
-              class="flex-1 py-1.5 text-xs bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200"
-            >
-              取消
-            </button>
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <p class="text-xs font-medium" style="color: var(--text-secondary);">
+                  <svg class="w-3.5 h-3.5 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  </svg>
+                  人物风格画像
+                </p>
+                <div class="flex gap-2">
+                  <button
+                    @click="startEditPersona(contact.name)"
+                    class="btn-secondary text-xs px-3 py-1.5"
+                    title="手动编辑画像"
+                  >
+                    <svg class="w-3 h-3 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                    编辑
+                  </button>
+                  <button
+                    @click="updatePersonality(contact.name)"
+                    :disabled="isUpdatingPersona === contact.name"
+                    class="btn-secondary text-xs px-3 py-1.5"
+                  >
+                    <svg v-if="isUpdatingPersona === contact.name" class="w-3 h-3 animate-spin inline-block mr-1" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    {{ isUpdatingPersona === contact.name ? '更新中...' : '更新画像' }}
+                  </button>
+                </div>
+              </div>
+
+              <div
+                v-if="isEditingPersona === contact.name && editingPersonaData"
+                class="p-4 rounded-xl space-y-4"
+                style="background: rgba(139, 115, 85, 0.04); border: 1px solid rgba(139, 115, 85, 0.1);"
+              >
+                <div>
+                  <p class="text-[10px] font-medium mb-2 flex items-center gap-1.5" style="color: var(--accent-warm);">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    权力身份特征
+                  </p>
+                  <div class="space-y-2">
+                    <div
+                      v-for="(trait, idx) in editingPersonaData.powerIdentity"
+                      :key="idx"
+                      class="p-3 rounded-xl space-y-2"
+                      style="background: white; border: 1px solid var(--border-light);"
+                    >
+                      <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-medium" style="color: var(--text-tertiary);">特征 #{{ idx + 1 }}</span>
+                        <button
+                          @click="removePersonaTrait('powerIdentity', idx)"
+                          class="text-red-400 hover:text-red-600 p-1 transition-colors"
+                          title="删除"
+                        >
+                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      <input
+                        v-model="trait.trait"
+                        type="text"
+                        placeholder="输入特征描述，如：强势、控制欲强..."
+                        class="input-field text-xs"
+                      />
+                      <div class="flex items-center gap-3">
+                        <span class="text-[10px]" style="color: var(--text-tertiary);">置信度</span>
+                        <input
+                          v-model.number="trait.confidence"
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          class="flex-1"
+                        />
+                        <span class="text-xs font-medium" style="color: var(--text-primary); min-width: 32px; text-align: right;">{{ (trait.confidence * 100).toFixed(0) }}%</span>
+                      </div>
+                    </div>
+                    <button
+                      @click="addPersonaTrait('powerIdentity')"
+                      class="w-full py-2 text-xs rounded-xl border border-dashed transition-colors"
+                      style="border-color: var(--border-light); color: var(--accent-warm);"
+                    >
+                      <svg class="w-3.5 h-3.5 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                      </svg>
+                      添加特征
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <p class="text-[10px] font-medium mb-2 flex items-center gap-1.5" style="color: var(--accent-warm);">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                    </svg>
+                    核心诉求
+                  </p>
+                  <div class="space-y-2">
+                    <div
+                      v-for="(need, idx) in editingPersonaData.psychologicalNeeds"
+                      :key="idx"
+                      class="p-3 rounded-xl space-y-2"
+                      style="background: white; border: 1px solid var(--border-light);"
+                    >
+                      <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-medium" style="color: var(--text-tertiary);">诉求 #{{ idx + 1 }}</span>
+                        <button
+                          @click="removePersonaTrait('psychologicalNeeds', idx)"
+                          class="text-red-400 hover:text-red-600 p-1 transition-colors"
+                          title="删除"
+                        >
+                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      <input
+                        v-model="need.need"
+                        type="text"
+                        placeholder="输入诉求描述，如：渴望被认可、需要安全感..."
+                        class="input-field text-xs"
+                      />
+                      <div class="flex items-center gap-3">
+                        <span class="text-[10px]" style="color: var(--text-tertiary);">权重</span>
+                        <input
+                          v-model.number="need.weight"
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          class="flex-1"
+                        />
+                        <span class="text-xs font-medium" style="color: var(--text-primary); min-width: 32px; text-align: right;">{{ (need.weight * 100).toFixed(0) }}%</span>
+                      </div>
+                    </div>
+                    <button
+                      @click="addPersonaTrait('psychologicalNeeds')"
+                      class="w-full py-2 text-xs rounded-xl border border-dashed transition-colors"
+                      style="border-color: var(--border-light); color: var(--accent-warm);"
+                    >
+                      <svg class="w-3.5 h-3.5 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                      </svg>
+                      添加诉求
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <p class="text-[10px] font-medium mb-2 flex items-center gap-1.5" style="color: #dc2626;">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                    </svg>
+                    沟通禁区
+                  </p>
+                  <div class="space-y-2">
+                    <div
+                      v-for="(taboo, idx) in editingPersonaData.taboos"
+                      :key="idx"
+                      class="p-3 rounded-xl space-y-2"
+                      style="background: white; border: 1px solid rgba(220, 38, 38, 0.15);"
+                    >
+                      <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-medium" style="color: var(--text-tertiary);">禁区 #{{ idx + 1 }}</span>
+                        <button
+                          @click="removePersonaTrait('taboos', idx)"
+                          class="text-red-400 hover:text-red-600 p-1 transition-colors"
+                          title="删除"
+                        >
+                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      <input
+                        v-model="taboo.rule"
+                        type="text"
+                        placeholder="输入禁区规则，如：避免谈论前任、不要催促..."
+                        class="input-field text-xs"
+                      />
+                      <div class="flex items-center gap-3">
+                        <span class="text-[10px]" style="color: var(--text-tertiary);">风险等级</span>
+                        <input
+                          v-model.number="taboo.riskFactor"
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          class="flex-1"
+                        />
+                        <span class="text-xs font-medium" style="color: #dc2626; min-width: 32px; text-align: right;">{{ (taboo.riskFactor * 100).toFixed(0) }}%</span>
+                      </div>
+                    </div>
+                    <button
+                      @click="addPersonaTrait('taboos')"
+                      class="w-full py-2 text-xs rounded-xl border border-dashed transition-colors"
+                      style="border-color: rgba(220, 38, 38, 0.2); color: #dc2626;"
+                    >
+                      <svg class="w-3.5 h-3.5 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                      </svg>
+                      添加禁区
+                    </button>
+                  </div>
+                </div>
+
+                <div class="pt-2" style="border-top: 1px solid var(--border-light);">
+                  <p class="text-[10px] font-medium mb-2" style="color: var(--accent-warm);">情绪热度</p>
+                  <div class="p-3 rounded-xl" style="background: white; border: 1px solid var(--border-light);">
+                    <div class="flex items-center gap-3">
+                      <span class="text-[10px]" style="color: var(--text-tertiary);">冷静</span>
+                      <input
+                        v-model.number="editingPersonaData.temperature"
+                        type="range"
+                        min="0"
+                        max="10"
+                        step="1"
+                        class="flex-1"
+                      />
+                      <span class="text-[10px]" style="color: var(--text-tertiary);">激烈</span>
+                      <span class="text-sm font-medium ml-2" style="color: var(--text-primary);">{{ editingPersonaData.temperature }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <p class="text-[10px] font-medium mb-2" style="color: var(--accent-warm);">文本风格</p>
+                  <textarea
+                    v-model="editingPersonaData.textStyle"
+                    placeholder="描述对方的文本风格特征，如：喜欢用短句、语气直接、偶尔使用表情符号..."
+                    class="input-field resize-none text-xs"
+                    rows="2"
+                  ></textarea>
+                </div>
+
+                <div>
+                  <p class="text-[10px] font-medium mb-2" style="color: var(--accent-warm);">综合总结</p>
+                  <textarea
+                    v-model="editingPersonaData.summary"
+                    placeholder="总结该联系人的性格特征和沟通模式，如：性格强势但内心敏感，需要被尊重和理解..."
+                    class="input-field resize-none text-xs"
+                    rows="3"
+                  ></textarea>
+                </div>
+
+                <div class="flex gap-2 pt-2" style="border-top: 1px solid var(--border-light);">
+                  <button @click="cancelEditPersona" class="btn-secondary flex-1">取消</button>
+                  <button @click="savePersonaEdit(contact.name)" class="btn-primary flex-1">
+                    <svg class="w-3.5 h-3.5 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                    保存修改
+                  </button>
+                </div>
+              </div>
+
+              <div
+                v-else-if="hasPersonaData(contact.name)"
+                class="p-3 rounded-xl space-y-2"
+                style="background: rgba(139, 115, 85, 0.04); border: 1px solid rgba(139, 115, 85, 0.1);"
+              >
+                <template v-if="getPersonaForContact(contact.name)">
+                  <div v-if="getPersonaForContact(contact.name)!.powerIdentity && getPersonaForContact(contact.name)!.powerIdentity!.length > 0">
+                    <p class="text-[10px] font-medium mb-1" style="color: var(--accent-warm);">权力身份特征</p>
+                    <div class="space-y-1">
+                      <div
+                        v-for="(trait, idx) in getPersonaForContact(contact.name)!.powerIdentity"
+                        :key="idx"
+                        class="flex items-center justify-between"
+                      >
+                        <span class="text-xs truncate flex-1" style="color: var(--text-secondary);">{{ trait.trait }}</span>
+                        <span class="text-[10px] ml-2" style="color: var(--text-tertiary);">{{ (trait.confidence * 100).toFixed(0) }}%</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div v-if="getPersonaForContact(contact.name)!.psychologicalNeeds && getPersonaForContact(contact.name)!.psychologicalNeeds!.length > 0">
+                    <p class="text-[10px] font-medium mb-1 mt-2" style="color: var(--accent-warm);">核心诉求</p>
+                    <div class="space-y-1">
+                      <div
+                        v-for="(need, idx) in getPersonaForContact(contact.name)!.psychologicalNeeds"
+                        :key="idx"
+                        class="flex items-center justify-between"
+                      >
+                        <span class="text-xs truncate flex-1" style="color: var(--text-secondary);">{{ need.need }}</span>
+                        <span class="text-[10px] ml-2" style="color: var(--text-tertiary);">{{ (need.weight * 100).toFixed(0) }}%</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div v-if="getPersonaForContact(contact.name)!.taboos && getPersonaForContact(contact.name)!.taboos!.length > 0">
+                    <p class="text-[10px] font-medium mb-1 mt-2" style="color: #dc2626;">沟通禁区</p>
+                    <div class="space-y-1">
+                      <div
+                        v-for="(taboo, idx) in getPersonaForContact(contact.name)!.taboos"
+                        :key="idx"
+                        class="flex items-center justify-between"
+                      >
+                        <span class="text-xs truncate flex-1" style="color: var(--text-secondary);">{{ taboo.rule }}</span>
+                        <span class="text-[10px] ml-2" style="color: var(--text-tertiary);">{{ (taboo.riskFactor * 100).toFixed(0) }}%</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div v-if="getPersonaForContact(contact.name)!.temperature" class="mt-2 pt-2" style="border-top: 1px solid rgba(139, 115, 85, 0.1);">
+                    <div class="flex items-center gap-2">
+                      <span class="text-[10px]" style="color: var(--text-tertiary);">情绪热度</span>
+                      <div class="flex-1 h-1.5 rounded-full" style="background: var(--bg-tertiary);">
+                        <div
+                          class="h-full rounded-full"
+                          style="background: var(--accent-warm);"
+                          :style="{ width: `${(getPersonaForContact(contact.name)!.temperature / 10) * 100}%` }"
+                        ></div>
+                      </div>
+                      <span class="text-[10px] font-medium" style="color: var(--text-primary);">{{ getPersonaForContact(contact.name)!.temperature }}/10</span>
+                    </div>
+                  </div>
+
+                  <p v-if="getPersonaForContact(contact.name)!.summary" class="text-xs mt-2 pt-2" style="border-top: 1px solid rgba(139, 115, 85, 0.1); color: var(--text-secondary);">
+                    {{ getPersonaForContact(contact.name)!.summary }}
+                  </p>
+                </template>
+              </div>
+
+              <p v-else class="text-xs text-center py-2" style="color: var(--text-tertiary);">
+                暂无风格画像，请先积累对话或使用"更新画像"按钮
+              </p>
+            </div>
           </div>
         </div>
       </div>
 
-      <div v-if="contactStore.contacts.length === 0" class="text-center py-6">
-        <p class="text-gray-400 text-sm">暂无联系人</p>
-        <p class="text-gray-300 text-xs mt-1">添加联系人后，AI 将根据性格特点定制回复</p>
+      <div v-if="contacts.length === 0" class="py-12 text-center">
+        <svg class="w-14 h-14 mx-auto mb-4" style="color: var(--text-tertiary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+        <p class="text-sm" style="color: var(--text-tertiary);">还没有添加任何联系人</p>
+        <button
+          @click="showAddForm = true"
+          class="btn-primary mt-3"
+        >
+          添加第一个联系人
+        </button>
       </div>
     </div>
   </div>

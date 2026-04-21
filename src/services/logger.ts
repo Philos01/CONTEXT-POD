@@ -36,31 +36,25 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
   ERROR: 3,
 };
 
-const LEVEL_COLORS: Record<LogLevel, string> = {
-  DEBUG: '#9ca3af',
-  INFO: '#3b82f6',
-  WARNING: '#f59e0b',
-  ERROR: '#ef4444',
-};
-
-const LEVEL_ICONS: Record<LogLevel, string> = {
-  DEBUG: '🔍',
-  INFO: 'ℹ️',
-  WARNING: '⚠️',
-  ERROR: '❌',
-};
-
 let config: LoggerConfig = { ...DEFAULT_CONFIG };
 let logs: LogEntry[] = [];
+let isInitialized = false;
 
 function loadConfig() {
   try {
     const saved = localStorage.getItem(CONFIG_KEY);
     if (saved) config = { ...DEFAULT_CONFIG, ...JSON.parse(saved) };
-    const savedLogs = localStorage.getItem(LOG_KEY);
-    if (savedLogs) logs = JSON.parse(savedLogs);
   } catch {
     // use defaults
+  }
+}
+
+function loadLogs() {
+  try {
+    const saved = localStorage.getItem(LOG_KEY);
+    if (saved) logs = JSON.parse(saved);
+  } catch {
+    logs = [];
   }
 }
 
@@ -75,9 +69,16 @@ function saveLogs() {
   }
 }
 
-loadConfig();
+function ensureInitialized() {
+  if (!isInitialized) {
+    loadConfig();
+    loadLogs();
+    isInitialized = true;
+  }
+}
 
 export function configureLogger(overrides: Partial<LoggerConfig>) {
+  ensureInitialized();
   config = { ...config, ...overrides };
   saveConfig();
 }
@@ -98,29 +99,29 @@ export function getLogger(module: string) {
     },
     time<T>(message: string, fn: () => T): T {
       const start = performance.now();
-      log('DEBUG', module, `⏱️ START: ${message}`);
+      log('DEBUG', module, `START: ${message}`);
       try {
         const result = fn();
         const duration = performance.now() - start;
-        log('DEBUG', module, `✅ END: ${message} (${duration.toFixed(2)}ms)`, undefined, duration);
+        log('DEBUG', module, `END: ${message} (${duration.toFixed(2)}ms)`, undefined, duration);
         return result;
       } catch (error) {
         const duration = performance.now() - start;
-        log('ERROR', module, `❌ FAIL: ${message} (${duration.toFixed(2)}ms)`, error, duration);
+        log('ERROR', module, `FAIL: ${message} (${duration.toFixed(2)}ms)`, error, duration);
         throw error;
       }
     },
     async timeAsync<T>(message: string, fn: () => Promise<T>): Promise<T> {
       const start = performance.now();
-      log('DEBUG', module, `⏱️ START (async): ${message}`);
+      log('DEBUG', module, `START (async): ${message}`);
       try {
         const result = await fn();
         const duration = performance.now() - start;
-        log('DEBUG', module, `✅ END (async): ${message} (${duration.toFixed(2)}ms)`, undefined, duration);
+        log('DEBUG', module, `END (async): ${message} (${duration.toFixed(2)}ms)`, undefined, duration);
         return result;
       } catch (error) {
         const duration = performance.now() - start;
-        log('ERROR', module, `❌ FAIL (async): ${message} (${duration.toFixed(2)}ms)`, error, duration);
+        log('ERROR', module, `FAIL (async): ${message} (${duration.toFixed(2)}ms)`, error, duration);
         throw error;
       }
     },
@@ -128,6 +129,8 @@ export function getLogger(module: string) {
 }
 
 function log(level: LogLevel, module: string, message: string, data?: any, duration?: number) {
+  ensureInitialized();
+
   if (!config.enabled || LEVEL_PRIORITY[level] < LEVEL_PRIORITY[config.minLevel]) return;
 
   const entry: LogEntry = {
@@ -144,29 +147,18 @@ function log(level: LogLevel, module: string, message: string, data?: any, durat
 
   if (config.consoleOutput) {
     const prefix = `[Context-Pod] [${level.padEnd(7)}]`;
-    const color = LEVEL_COLORS[level];
-    const icon = LEVEL_ICONS[level];
     
     if (data !== undefined) {
-      console.log(`%c${prefix}%c${icon} %c[${module}]%c${message}`, 
-        `color:${color};font-weight:bold`,
-        '',
-        `color:#6b7280;font-size:11px`,
-        '',
-        data
-      );
+      console.log(`${prefix} [${module}] ${message}`, data);
     } else {
-      console.log(`%c${prefix}%c${icon} %c[%module]%c${message}`,
-        `color:${color};font-weight:bold`,
-        '',
-        `color:#6b7280;font-size:11px`,
-        ''
-      );
+      console.log(`${prefix} [${module}] ${message}`);
     }
   }
 
-  if (config.storageEnabled && logs.length > config.maxStorageEntries * 1.5) {
-    saveLogs();
+  if (config.storageEnabled) {
+    if (logs.length > config.maxStorageEntries * 1.5) {
+      saveLogs();
+    }
   }
 }
 
@@ -177,6 +169,8 @@ export function getLogs(options?: {
   limit?: number;
   offset?: number;
 }): LogEntry[] {
+  ensureInitialized();
+
   let filtered = [...logs];
 
   if (options?.level) {
@@ -190,7 +184,7 @@ export function getLogs(options?: {
 
   if (options?.search) {
     const searchLower = options.search.toLowerCase();
-    filtered = filtered.filter(l => 
+    filtered = filtered.filter(l =>
       l.message.toLowerCase().includes(searchLower) ||
       (l.data && l.data.toLowerCase().includes(searchLower))
     );
@@ -203,10 +197,13 @@ export function getLogs(options?: {
 }
 
 export function getLogCount(): number {
+  ensureInitialized();
   return logs.length;
 }
 
 export function getLogStats(): Record<LogLevel, number> & { total: number } {
+  ensureInitialized();
+
   const stats: Record<string, number> = {
     DEBUG: 0,
     INFO: 0,
@@ -223,13 +220,16 @@ export function getLogStats(): Record<LogLevel, number> & { total: number } {
 }
 
 export function clearLogs() {
+  ensureInitialized();
   logs = [];
   localStorage.removeItem(LOG_KEY);
 }
 
 export function exportLogs(): string {
+  ensureInitialized();
+
   const header = `Context-Pod Logs\nExported: ${new Date().toISOString()}\nTotal Entries: ${logs.length}\n${'='.repeat(80)}\n\n`;
-  
+
   let content = '';
   for (const log of logs) {
     const time = new Date(log.timestamp).toISOString();

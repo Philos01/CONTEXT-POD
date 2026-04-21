@@ -1,5 +1,8 @@
-import { getPersona, savePersona, mergePersona, extractStyleFromChat } from './personaService';
-import type { StylePersona, AppSettings } from '@/types';
+import { getPersona, savePersona, mergePersona, extractStyleFromChat, getDynamicPersona, saveDynamicPersona, extractDynamicPersona, mergeDynamicPersona, applyDecay } from './personaService';
+import type { StylePersona, DynamicPersonaSchema, AppSettings } from '@/types';
+import { getLogger } from './logger';
+
+const logger = getLogger('evolutionEngine');
 
 const BUFFER_KEY = 'context-pod-chat-buffer';
 const EVOLUTION_THRESHOLD = 50;
@@ -177,25 +180,28 @@ export function deleteBufferEntry(id: string): boolean {
 export async function triggerPersonaUpdate(
   contactName: string,
   settings: AppSettings,
-  forceManual: boolean = false // 新增：是否强制手动触发
-): Promise<{ success: boolean; persona: StylePersona | null; processedCount: number }> {
+  forceManual: boolean = false
+): Promise<{ success: boolean; persona: StylePersona | null; dynamicPersona: DynamicPersonaSchema | null; processedCount: number }> {
+  logger.info('Triggering persona update', { contactName, forceManual });
+  
   if (isEvolving) {
+    logger.warning('Evolution already in progress, skipping', { contactName });
     console.log(`[Context-Pod] Evolution already in progress, skipping`);
-    return { success: false, persona: null, processedCount: 0 };
+    return { success: false, persona: null, dynamicPersona: null, processedCount: 0 };
   }
 
   const entries = getBufferByContact(contactName);
   
-  // 如果不是手动触发且条数不足，则不执行
   if (!forceManual && entries.length < EVOLUTION_THRESHOLD) {
+    logger.debug('Not enough entries for evolution', { contactName, count: entries.length, threshold: EVOLUTION_THRESHOLD });
     console.log(`[Context-Pod] Not enough entries for ${contactName}: ${entries.length}/${EVOLUTION_THRESHOLD}`);
-    return { success: false, persona: null, processedCount: 0 };
+    return { success: false, persona: null, dynamicPersona: null, processedCount: 0 };
   }
 
-  // 手动触发时，即使条数不足也允许（至少需要1条）
   if (forceManual && entries.length < 1) {
+    logger.debug('No entries available for evolution', { contactName });
     console.log(`[Context-Pod] No entries available for ${contactName}`);
-    return { success: false, persona: null, processedCount: 0 };
+    return { success: false, persona: null, dynamicPersona: null, processedCount: 0 };
   }
 
   isEvolving = true;
@@ -205,53 +211,66 @@ export async function triggerPersonaUpdate(
   notifyStatusListeners();
 
   try {
-    // 使用所有可用条目或最多50条
     const targetEntries = entries.slice(0, Math.min(entries.length, EVOLUTION_THRESHOLD));
     const targetIds = targetEntries.map(e => e.id);
 
+    logger.info('Starting persona evolution', { contactName, entryCount: targetEntries.length, manual: forceManual });
     console.log(`[Context-Pod] 🧬 Starting persona evolution for "${contactName}" with ${targetEntries.length} entries${forceManual ? ' (manual trigger)' : ''}`);
 
-    evolutionStatus.progress = 20;
+    evolutionStatus.progress = 15;
     notifyStatusListeners();
 
     const chatText = targetEntries
       .map(e => `${e.role === 'partner' ? contactName : '我'}: ${e.content}`)
       .join('\n');
 
-    evolutionStatus.progress = 40;
+    evolutionStatus.progress = 30;
     notifyStatusListeners();
 
-    const newPersona = await extractStyleFromChat(chatText, settings);
+    logger.info('Extracting personas from chat text');
+    const [newPersona, newDynamicPersona] = await Promise.all([
+      extractStyleFromChat(chatText, settings),
+      extractDynamicPersona(chatText, contactName, settings),
+    ]);
 
-    evolutionStatus.progress = 70;
+    evolutionStatus.progress = 60;
     notifyStatusListeners();
 
+    logger.info('Merging and saving personas');
     const existingPersona = getPersona(contactName);
     let finalPersona: StylePersona;
-
     if (existingPersona && existingPersona.summary !== '风格提取失败') {
       finalPersona = mergePersona(existingPersona, chatText, newPersona);
-      console.log(`[Context-Pod] Merged persona for "${contactName}"`);
     } else {
       finalPersona = newPersona;
-      console.log(`[Context-Pod] Created new persona for "${contactName}"`);
     }
-
     savePersona(contactName, finalPersona);
 
-    evolutionStatus.progress = 90;
+    const existingDynamicPersona = getDynamicPersona(contactName);
+    let finalDynamicPersona: DynamicPersonaSchema;
+    if (existingDynamicPersona && existingDynamicPersona.summary !== '画像提取失败') {
+      const decayed = applyDecay(existingDynamicPersona);
+      finalDynamicPersona = mergeDynamicPersona(decayed, newDynamicPersona);
+    } else {
+      finalDynamicPersona = newDynamicPersona;
+    }
+    saveDynamicPersona(contactName, finalDynamicPersona);
+
+    evolutionStatus.progress = 85;
     notifyStatusListeners();
 
     atomicDeleteByIds(targetIds);
 
     evolutionStatus.progress = 100;
     evolutionStatus.lastEvolutionTime = Date.now();
+    logger.info('Persona evolution completed', { contactName, processedCount: targetEntries.length });
     console.log(`[Context-Pod] ✅ Persona evolution complete for "${contactName}"`);
 
-    return { success: true, persona: finalPersona, processedCount: targetEntries.length };
+    return { success: true, persona: finalPersona, dynamicPersona: finalDynamicPersona, processedCount: targetEntries.length };
   } catch (error) {
+    logger.error('Persona evolution failed', { contactName, error });
     console.error(`[Context-Pod] ❌ Persona evolution failed for "${contactName}":`, error);
-    return { success: false, persona: null, processedCount: 0 };
+    return { success: false, persona: null, dynamicPersona: null, processedCount: 0 };
   } finally {
     isEvolving = false;
     evolutionStatus.isEvolving = false;
@@ -353,6 +372,24 @@ export function renameBufferEntries(oldName: string, newName: string): void {
   } else {
     console.log(`[EvolutionEngine] No buffer entries found for "${oldName}"`);
   }
+}
+
+export function deleteBufferEntriesByContact(contactName: string): number {
+  console.log(`[EvolutionEngine] Deleting buffer entries for "${contactName}"`);
+  
+  const buffer = loadBuffer();
+  const remaining = buffer.filter(e => e.contactName !== contactName);
+  const deletedCount = buffer.length - remaining.length;
+  
+  if (deletedCount > 0) {
+    console.log(`[EvolutionEngine] Deleted ${deletedCount} buffer entries for "${contactName}"`);
+    saveBuffer(remaining);
+    updatePendingCounts();
+  } else {
+    console.log(`[EvolutionEngine] No buffer entries found for "${contactName}"`);
+  }
+  
+  return deletedCount;
 }
 
 // 保存用户自定义回复，用于学习用户风格

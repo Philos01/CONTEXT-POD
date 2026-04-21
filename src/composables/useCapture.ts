@@ -5,26 +5,28 @@ import type { CaptureResult } from '@/types';
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 let cachedActiveWindowTitle = '';
 
+let moduleLevelCurrentShortcut = '';
+const moduleIsRegistered = ref(false);
+const moduleLastError = ref<string>('');
+let moduleOnTriggerCallback: ((result: CaptureResult) => void) | null = null;
+
 export function useCapture() {
   const isCapturing = ref(false);
   const lastCapture = ref<CaptureResult | null>(null);
   const appStore = useAppStore();
   const shortcutKey = ref(appStore.settings.shortcutKey);
-  const isRegistered = ref(false);
-  const lastError = ref<string>('');
-  let currentShortcut = '';
-  let onTriggerCallback: ((result: CaptureResult) => void) | null = null;
 
   console.log(`[Context-Pod] ============================================`);
   console.log(`[Context-Pod] 🚀 useCapture initialized`);
   console.log(`[Context-Pod]    Environment: ${isTauri ? 'Tauri (Desktop)' : 'Browser'}`);
   console.log(`[Context-Pod]    Shortcut: "${shortcutKey.value}"`);
+  console.log(`[Context-Pod]    Current registered: "${moduleLevelCurrentShortcut}"`);
   console.log(`[Context-Pod] ============================================`);
 
   watch(() => appStore.settings.shortcutKey, (newKey) => {
     console.log(`[Context-Pod] ⌨️  Shortcut changed: "${shortcutKey.value}" -> "${newKey}"`);
     shortcutKey.value = newKey;
-    if (isTauri && currentShortcut) {
+    if (isTauri && moduleLevelCurrentShortcut) {
       reRegisterShortcut(newKey);
     }
   });
@@ -41,13 +43,13 @@ export function useCapture() {
 
   async function reRegisterShortcut(newKey: string) {
     try {
-      console.log(`[Context-Pod] 🔁 Re-registering shortcut: "${currentShortcut}" -> "${newKey}"`);
+      console.log(`[Context-Pod] 🔁 Re-registering shortcut: "${moduleLevelCurrentShortcut}" -> "${newKey}"`);
       const { unregister, register } = await import('@tauri-apps/plugin-global-shortcut');
       
-      if (currentShortcut) {
+      if (moduleLevelCurrentShortcut) {
         try {
-          await unregister(currentShortcut);
-          console.log(`[Context-Pod] ✅ Unregistered old shortcut: "${currentShortcut}"`);
+          await unregister(moduleLevelCurrentShortcut);
+          console.log(`[Context-Pod] ✅ Unregistered old shortcut: "${moduleLevelCurrentShortcut}"`);
         } catch (e) {
           console.warn(`[Context-Pod] ⚠️ Failed to unregister old shortcut:`, e);
         }
@@ -57,14 +59,14 @@ export function useCapture() {
         await handleGlobalShortcutTrigger();
       });
 
-      currentShortcut = newKey;
-      isRegistered.value = true;
-      lastError.value = '';
+      moduleLevelCurrentShortcut = newKey;
+      moduleIsRegistered.value = true;
+      moduleLastError.value = '';
       console.log(`[Context-Pod] ✅ Shortcut updated to: "${newKey}"`);
     } catch (error) {
       console.error('[Context-Pod] ❌ Failed to update shortcut:', error);
-      lastError.value = `更新失败: ${error}`;
-      isRegistered.value = false;
+      moduleLastError.value = `更新失败: ${error}`;
+      moduleIsRegistered.value = false;
     }
   }
 
@@ -73,15 +75,14 @@ export function useCapture() {
     console.log(`[Context-Pod] 🎯 GLOBAL SHORTCUT TRIGGERED!`);
     console.log(`[Context-Pod] ================================`);
     
-    if (!onTriggerCallback) {
+    if (!moduleOnTriggerCallback) {
       console.error('[Context-Pod] ❌ No trigger callback registered!');
-      lastError.value = '回调函数未注册';
+      moduleLastError.value = '回调函数未注册';
       return;
     }
     
     if (isCapturing.value) {
       console.log('[Context-Pod] ⏳ Already capturing, ignoring duplicate trigger');
-      // 不设置 lastError，避免显示"正在处理中"
       return;
     }
     
@@ -90,7 +91,6 @@ export function useCapture() {
     try {
       console.log('[Context-Pod] 📋 Starting capture process...');
       
-      // 1. 先获取活动窗口（在显示伴聊悬浮舱之前）
       if (isTauri) {
         try {
           const { invoke } = await import('@tauri-apps/api/core');
@@ -120,19 +120,18 @@ export function useCapture() {
       
       if (!text || text.trim().length === 0) {
         console.warn('[Context-Pod] ⚠️ Clipboard is empty!');
-        lastError.value = '剪贴板为空！请先选中文字并 Ctrl+C 复制';
+        moduleLastError.value = '剪贴板为空！请先选中文字并 Ctrl+C 复制';
         
         const result: CaptureResult = {
           text: '',
           timestamp: Date.now(),
         };
         lastCapture.value = result;
-        onTriggerCallback(result);
+        moduleOnTriggerCallback(result);
         
         setTimeout(() => {
           isCapturing.value = false;
-          // 3秒后清空错误，避免下次还显示
-          setTimeout(() => { lastError.value = ''; }, 3000);
+          setTimeout(() => { moduleLastError.value = ''; }, 3000);
         }, 300);
         return;
       }
@@ -143,14 +142,14 @@ export function useCapture() {
       };
 
       lastCapture.value = result;
-      lastError.value = '';
+      moduleLastError.value = '';
       
       console.log('[Context-Pod] 📢 Calling onTrigger callback...');
-      onTriggerCallback(result);
+      moduleOnTriggerCallback(result);
       console.log('[Context-Pod] ✅ Callback completed successfully');
     } catch (error) {
       console.error('[Context-Pod] ❌ Capture process failed:', error);
-      lastError.value = `捕获失败: ${error}`;
+      moduleLastError.value = `捕获失败: ${error}`;
     } finally {
       setTimeout(() => {
         isCapturing.value = false;
@@ -170,7 +169,7 @@ export function useCapture() {
     console.log(`[Context-Pod]    e.shiftKey: ${e.shiftKey}`);
     console.log(`[Context-Pod]    Target shortcut: "${shortcutKey.value}"`);
 
-    if (!onTriggerCallback) {
+    if (!moduleOnTriggerCallback) {
       console.warn('[Context-Pod] ❌ No trigger callback registered');
       return;
     }
@@ -218,7 +217,7 @@ export function useCapture() {
       lastCapture.value = result;
       
       console.log('[Context-Pod] Calling onTrigger callback...');
-      onTriggerCallback(result);
+      moduleOnTriggerCallback(result);
       
       setTimeout(() => {
         isCapturing.value = false;
@@ -227,37 +226,69 @@ export function useCapture() {
   }
 
   const initShortcut = async (onTrigger: (result: CaptureResult) => void) => {
-    onTriggerCallback = onTrigger;
+    moduleOnTriggerCallback = onTrigger;
     console.log(`[Context-Pod] 📍 initShortcut called with callback`);
+    console.log(`[Context-Pod] 📊 Module state - currentShortcut: "${moduleLevelCurrentShortcut}", isRegistered: ${moduleIsRegistered.value}`);
 
     if (!isTauri) {
       console.log(`[Context-Pod] 🌐 Browser mode - setting up keyboard listener for "${shortcutKey.value}"`);
       document.addEventListener('keydown', handleBrowserShortcut);
-      isRegistered.value = true;
+      moduleIsRegistered.value = true;
       console.log('[Context-Pod] ✅ Browser keyboard listener registered successfully');
       return;
     }
 
     try {
       console.log(`[Context-Pod] 📡 Attempting to register global shortcut: "${shortcutKey.value}"`);
-      
-      const { register } = await import('@tauri-apps/plugin-global-shortcut');
-      
+
+      const { unregister, register } = await import('@tauri-apps/plugin-global-shortcut');
+
+      // 策略1：注销模块级记录的快捷键
+      if (moduleLevelCurrentShortcut) {
+        try {
+          await unregister(moduleLevelCurrentShortcut);
+          console.log(`[Context-Pod] 🧹 Unregistered module-level shortcut: "${moduleLevelCurrentShortcut}"`);
+        } catch (e) {
+          console.warn(`[Context-Pod] ⚠️ Failed to unregister module-level shortcut:`, e);
+        }
+      }
+
+      // 策略2：尝试注销当前要注册的快捷键（防止其他实例注册过）
+      try {
+        await unregister(shortcutKey.value);
+        console.log(`[Context-Pod] 🧹 Proactively unregistered target shortcut: "${shortcutKey.value}"`);
+      } catch (e) {
+        console.log(`[Context-Pod] ℹ️ Target shortcut not previously registered (this is ok): ${shortcutKey.value}`);
+      }
+
       await register(shortcutKey.value, async () => {
         await handleGlobalShortcutTrigger();
       });
 
-      currentShortcut = shortcutKey.value;
-      isRegistered.value = true;
-      lastError.value = '';
+      moduleLevelCurrentShortcut = shortcutKey.value;
+      moduleIsRegistered.value = true;
+      moduleLastError.value = '';
       console.log(`[Context-Pod] ✅✅✅ Global shortcut registered SUCCESSFULLY: "${shortcutKey.value}"`);
       console.log(`[Context-Pod] 💡 Usage: 1) Select text in chat 2) Press Ctrl+C to copy 3) Press ${shortcutKey.value} to capture`);
     } catch (error) {
+      const errorMessage = error?.toString() || JSON.stringify(error);
+      const isAlreadyRegistered = errorMessage.includes('already registered') || errorMessage.includes('HotKey already');
+
+      if (isAlreadyRegistered) {
+        console.log(`[Context-Pod] ℹ️ Shortcut "${shortcutKey.value}" already registered (likely from previous instance or HMR)`);
+        console.log(`[Context-Pod] ✅ Treating as SUCCESS - shortcut is active and functional`);
+
+        moduleLevelCurrentShortcut = shortcutKey.value;
+        moduleIsRegistered.value = true;
+        moduleLastError.value = '';
+        return;
+      }
+
       console.error(`[Context-Pod] ❌❌❌ FAILED to register global shortcut:`, error);
       console.error(`[Context-Pod] Error details:`, JSON.stringify(error, Object.getOwnPropertyNames(error)));
-      isRegistered.value = false;
-      lastError.value = `快捷键注册失败: ${error}`;
-      
+      moduleIsRegistered.value = false;
+      moduleLastError.value = `快捷键注册失败: ${error}`;
+
       alert(`⚠️ 快捷键注册失败！\n\n错误信息: ${error}\n\n可能的原因:\n1. 该快捷键被其他程序占用\n2. 系统权限不足\n3. Tauri 插件未正确安装\n\n请尝试:\n- 更换其他快捷键（如 F10、F11）\n- 以管理员身份运行应用\n- 检查控制台详细日志`);
     }
   };
@@ -294,7 +325,7 @@ export function useCapture() {
 
   const cleanupShortcut = async () => {
     console.log('[Context-Pod] 🧹 Cleaning up shortcuts...');
-    onTriggerCallback = null;
+    moduleOnTriggerCallback = null;
     
     if (!isTauri) {
       document.removeEventListener('keydown', handleBrowserShortcut);
@@ -304,9 +335,10 @@ export function useCapture() {
     
     try {
       const { unregister } = await import('@tauri-apps/plugin-global-shortcut');
-      if (currentShortcut) {
-        await unregister(currentShortcut);
-        console.log(`[Context-Pod] Unregistered shortcut: ${currentShortcut}`);
+      if (moduleLevelCurrentShortcut) {
+        await unregister(moduleLevelCurrentShortcut);
+        console.log(`[Context-Pod] Unregistered shortcut: ${moduleLevelCurrentShortcut}`);
+        moduleLevelCurrentShortcut = '';
       }
     } catch (error) {
       console.log('[Context-Pod] Cleanup shortcut error:', error);
@@ -319,8 +351,8 @@ export function useCapture() {
     isCapturing,
     lastCapture,
     shortcutKey,
-    isRegistered,
-    lastError,
+    isRegistered: moduleIsRegistered,
+    lastError: moduleLastError,
     initShortcut,
     cleanupShortcut,
     showWindow,

@@ -2,8 +2,8 @@ import { defineStore } from 'pinia';
 import { ref, computed, watch } from 'vue';
 import type { Contact } from '@/types';
 import { addMemory, initMemoryService, updateContactIndex } from '@/services/memoryService';
-import { renamePersona } from '@/services/personaService';
-import { renameBufferEntries } from '@/services/evolutionEngine';
+import { renamePersona, deletePersona } from '@/services/personaService';
+import { renameBufferEntries, deleteBufferEntriesByContact } from '@/services/evolutionEngine';
 
 const CONTACTS_KEY = 'context-pod-contacts';
 
@@ -57,6 +57,7 @@ export const useContactStore = defineStore('contacts', () => {
       id: crypto.randomUUID(),
       name,
       personality,
+      identity: '',
       tags,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -77,6 +78,14 @@ export const useContactStore = defineStore('contacts', () => {
   }
 
   function removeContact(id: string) {
+    const contactToRemove = contacts.value.find(c => c.id === id);
+    if (contactToRemove) {
+      console.log(`[ContactStore] Removing contact: ${contactToRemove.name}`);
+      // 同步删除风格画像
+      deletePersona(contactToRemove.name);
+      // 同步删除缓冲区数据
+      deleteBufferEntriesByContact(contactToRemove.name);
+    }
     contacts.value = contacts.value.filter((c) => c.id !== id);
     localStorage.setItem(CONTACTS_KEY, JSON.stringify(contacts.value));
   }
