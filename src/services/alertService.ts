@@ -3,8 +3,9 @@ import { ref } from 'vue';
 interface AlertOptions {
   message: string;
   title?: string;
-  type?: 'info' | 'success' | 'warning' | 'error';
+  type?: 'info' | 'success' | 'warning' | 'error' | 'confirm';
   confirmText?: string;
+  cancelText?: string;
   onConfirm?: () => void;
 }
 
@@ -49,6 +50,16 @@ class AlertService {
     return this.show({
       message,
       type: 'error',
+      ...options
+    });
+  }
+
+  showConfirm(message: string, options?: Partial<AlertOptions>) {
+    return this.show({
+      message,
+      type: 'confirm',
+      confirmText: options?.confirmText || '确定',
+      cancelText: options?.cancelText || '取消',
       ...options
     });
   }

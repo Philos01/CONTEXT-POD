@@ -2,8 +2,8 @@ import { ref, watch } from 'vue';
 import { useAppStore } from '@/stores/appStore';
 import type { CaptureResult } from '@/types';
 import { alertService } from '@/services/alertService';
+import { isTauri, isMobile, getPlatform } from '@/utils/platform';
 
-const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 let cachedActiveWindowTitle = '';
 
 let moduleLevelCurrentShortcut = '';
@@ -16,18 +16,21 @@ export function useCapture() {
   const lastCapture = ref<CaptureResult | null>(null);
   const appStore = useAppStore();
   const shortcutKey = ref(appStore.settings.shortcutKey);
+  const platform = getPlatform();
+  const isMobileDevice = isMobile();
 
   console.log(`[Context-Pod] ============================================`);
   console.log(`[Context-Pod] 🚀 useCapture initialized`);
-  console.log(`[Context-Pod]    Environment: ${isTauri ? 'Tauri (Desktop)' : 'Browser'}`);
+  console.log(`[Context-Pod]    Environment: ${isTauri ? 'Tauri' : 'Browser'}`);
+  console.log(`[Context-Pod]    Platform: ${platform}`);
+  console.log(`[Context-Pod]    Is Mobile: ${isMobileDevice}`);
   console.log(`[Context-Pod]    Shortcut: "${shortcutKey.value}"`);
-  console.log(`[Context-Pod]    Current registered: "${moduleLevelCurrentShortcut}"`);
   console.log(`[Context-Pod] ============================================`);
 
   watch(() => appStore.settings.shortcutKey, (newKey) => {
     console.log(`[Context-Pod] ⌨️  Shortcut changed: "${shortcutKey.value}" -> "${newKey}"`);
     shortcutKey.value = newKey;
-    if (isTauri && moduleLevelCurrentShortcut) {
+    if (isTauri && !isMobileDevice && moduleLevelCurrentShortcut) {
       reRegisterShortcut(newKey);
     }
   });
@@ -43,6 +46,11 @@ export function useCapture() {
   }
 
   async function reRegisterShortcut(newKey: string) {
+    if (isMobileDevice) {
+      console.log('[Context-Pod] Mobile device - skipping shortcut registration');
+      return;
+    }
+
     try {
       console.log(`[Context-Pod] 🔁 Re-registering shortcut: "${moduleLevelCurrentShortcut}" -> "${newKey}"`);
       const { unregister, register } = await import('@tauri-apps/plugin-global-shortcut');
@@ -92,7 +100,7 @@ export function useCapture() {
     try {
       console.log('[Context-Pod] 📋 Starting capture process...');
       
-      if (isTauri) {
+      if (isTauri && !isMobileDevice) {
         try {
           const { invoke } = await import('@tauri-apps/api/core');
           cachedActiveWindowTitle = await invoke('get_active_window_title');
@@ -103,15 +111,24 @@ export function useCapture() {
         }
       }
       
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      const appWindow = getCurrentWindow();
+      if (isTauri && !isMobileDevice) {
+        console.log('[Context-Pod] 📋 Auto-copying selected text...');
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('simulate_copy_action');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
       
-      console.log('[Context-Pod] 👁️ Showing and focusing window...');
-      await appWindow.show().catch(e => console.error('[Context-Pod] show error:', e));
-      await appWindow.setFocus().catch(e => console.error('[Context-Pod] setFocus error:', e));
+      if (isTauri && !isMobileDevice) {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        const appWindow = getCurrentWindow();
+        
+        console.log('[Context-Pod] 👁️ Showing and focusing window...');
+        await appWindow.show().catch(e => console.error('[Context-Pod] show error:', e));
+        await appWindow.setFocus().catch(e => console.error('[Context-Pod] setFocus error:', e));
 
-      console.log('[Context-Pod] ⏳ Waiting for window to be ready...');
-      await new Promise((resolve) => setTimeout(resolve, 200));
+        console.log('[Context-Pod] ⏳ Waiting for window to be ready...');
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
 
       console.log('[Context-Pod] 📄 Reading clipboard directly...');
       const { readText } = await import('@tauri-apps/plugin-clipboard-manager');
@@ -121,7 +138,7 @@ export function useCapture() {
       
       if (!text || text.trim().length === 0) {
         console.warn('[Context-Pod] ⚠️ Clipboard is empty!');
-        moduleLastError.value = '剪贴板为空！请先选中文字并 Ctrl+C 复制';
+        moduleLastError.value = '剪贴板为空！请先选中文字并复制';
         
         const result: CaptureResult = {
           text: '',
@@ -239,12 +256,17 @@ export function useCapture() {
       return;
     }
 
+    if (isMobileDevice) {
+      console.log('[Context-Pod] 📱 Mobile device - shortcut registration skipped, use manual capture');
+      moduleIsRegistered.value = true;
+      return;
+    }
+
     try {
       console.log(`[Context-Pod] 📡 Attempting to register global shortcut: "${shortcutKey.value}"`);
 
       const { unregister, register } = await import('@tauri-apps/plugin-global-shortcut');
 
-      // 策略1：注销模块级记录的快捷键
       if (moduleLevelCurrentShortcut) {
         try {
           await unregister(moduleLevelCurrentShortcut);
@@ -254,7 +276,6 @@ export function useCapture() {
         }
       }
 
-      // 策略2：尝试注销当前要注册的快捷键（防止其他实例注册过）
       try {
         await unregister(shortcutKey.value);
         console.log(`[Context-Pod] 🧹 Proactively unregistered target shortcut: "${shortcutKey.value}"`);
@@ -270,7 +291,7 @@ export function useCapture() {
       moduleIsRegistered.value = true;
       moduleLastError.value = '';
       console.log(`[Context-Pod] ✅✅✅ Global shortcut registered SUCCESSFULLY: "${shortcutKey.value}"`);
-      console.log(`[Context-Pod] 💡 Usage: 1) Select text in chat 2) Press Ctrl+C to copy 3) Press ${shortcutKey.value} to capture`);
+      console.log(`[Context-Pod] 💡 Usage: 1) Select text in chat 2) Press ${shortcutKey.value} to capture (text auto-copy now!)`);
     } catch (error) {
       const errorMessage = error?.toString() || JSON.stringify(error);
       const isAlreadyRegistered = errorMessage.includes('already registered') || errorMessage.includes('HotKey already');
@@ -294,9 +315,63 @@ export function useCapture() {
     }
   };
 
+  const manualCapture = async (text?: string): Promise<CaptureResult | null> => {
+    console.log('[Context-Pod] 📱 Manual capture triggered');
+    
+    if (!moduleOnTriggerCallback) {
+      console.error('[Context-Pod] ❌ No trigger callback registered!');
+      return null;
+    }
+    
+    if (isCapturing.value) {
+      console.log('[Context-Pod] ⏳ Already capturing, skip');
+      return null;
+    }
+    
+    isCapturing.value = true;
+
+    try {
+      let capturedText = text;
+      
+      if (!capturedText && isTauri) {
+        console.log('[Context-Pod] 📄 Reading clipboard...');
+        const { readText } = await import('@tauri-apps/plugin-clipboard-manager');
+        capturedText = await readText() || undefined;
+      }
+      
+      if (!capturedText) {
+        console.warn('[Context-Pod] ⚠️ No text provided and clipboard is empty');
+        moduleLastError.value = '请输入文字或复制内容到剪贴板';
+        return null;
+      }
+
+      const result: CaptureResult = {
+        text: capturedText,
+        timestamp: Date.now(),
+      };
+
+      lastCapture.value = result;
+      moduleLastError.value = '';
+      
+      console.log('[Context-Pod] 📢 Calling onTrigger callback...');
+      moduleOnTriggerCallback(result);
+      console.log('[Context-Pod] ✅ Manual capture completed');
+      
+      return result;
+    } catch (error) {
+      console.error('[Context-Pod] ❌ Manual capture failed:', error);
+      moduleLastError.value = `捕获失败: ${error}`;
+      return null;
+    } finally {
+      setTimeout(() => {
+        isCapturing.value = false;
+      }, 300);
+    }
+  };
+
   const showWindow = async () => {
-    if (!isTauri) {
-      console.log('[Context-Pod] Browser mode - cannot show window via command');
+    if (!isTauri || isMobileDevice) {
+      console.log('[Context-Pod] Non-desktop mode - cannot show window via command');
       return;
     }
     
@@ -310,8 +385,8 @@ export function useCapture() {
   };
 
   const hideWindow = async () => {
-    if (!isTauri) {
-      console.log('[Context-Pod] Browser mode - cannot hide window via command');
+    if (!isTauri || isMobileDevice) {
+      console.log('[Context-Pod] Non-desktop mode - cannot hide window via command');
       return;
     }
     
@@ -331,6 +406,11 @@ export function useCapture() {
     if (!isTauri) {
       document.removeEventListener('keydown', handleBrowserShortcut);
       console.log('[Context-Pod] Browser keyboard listener removed');
+      return;
+    }
+
+    if (isMobileDevice) {
+      console.log('[Context-Pod] Mobile device - no shortcut to cleanup');
       return;
     }
     
@@ -359,5 +439,8 @@ export function useCapture() {
     showWindow,
     hideWindow,
     getCachedActiveWindow,
+    manualCapture,
+    isMobileDevice,
+    platform,
   };
 }

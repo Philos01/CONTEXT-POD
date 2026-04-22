@@ -12,6 +12,7 @@ import {
   getEvolutionStatus,
   onEvolutionStatusChange,
   saveUserReply,
+  pushToBuffer,
   type EvolutionStatus
 } from '@/services/evolutionEngine';
 import ReplyCard from './ReplyCard.vue';
@@ -28,15 +29,17 @@ import type { ReplyStrategy, AgentState, TacticalGoal } from '@/types';
 import { CONVERSATION_PHASE_LABELS, TACTICAL_GOAL_LABELS } from '@/types';
 import { getPhaseStrategyHint } from '@/services/conversationStateEngine';
 import { alertService } from '@/services/alertService';
+import { isTauri, isMobile } from '@/utils/platform';
 
-const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+const isMobileDevice = isMobile();
 
 const appStore = useAppStore();
 const contactStore = useContactStore();
-const { initShortcut, cleanupShortcut, isRegistered, lastError } = useCapture();
+const { initShortcut, cleanupShortcut, isRegistered, lastError, manualCapture } = useCapture();
 useWindowManager();
 
 const rawContext = ref('');
+const manualInputText = ref('');
 const strategies = ref<ReplyStrategy[]>([]);
 const streamingText = ref('');
 const isWorking = ref(false);
@@ -162,6 +165,25 @@ async function handleCapture(result: { text: string }) {
   streamingText.value = '请选择或输入联系人';
 }
 
+async function handleManualCapture() {
+  if (!manualInputText.value.trim()) {
+    alertService.warning('请输入对话内容');
+    return;
+  }
+  
+  const result = await manualCapture(manualInputText.value);
+  if (result) {
+    rawContext.value = result.text;
+    manualInputText.value = '';
+    isWorking.value = false;
+    strategies.value = [];
+    streamingText.value = '';
+    activeTab.value = 'main';
+    showContactPicker.value = true;
+    streamingText.value = '请选择或输入联系人';
+  }
+}
+
 async function executeWorkflow(text: string, overrideName?: string, overrideIdentity?: string) {
   isWorking.value = true;
   showContactPicker.value = false;
@@ -206,24 +228,16 @@ async function injectToChat(selectedReply: string) {
   try {
     lastSelectedStrategy.value = selectedReply;
 
+    pushToBuffer('自我', selectedReply, 'user');
+
     if (isTauri) {
       const { writeText } = await import('@tauri-apps/plugin-clipboard-manager');
       await writeText(selectedReply);
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      const appWindow = getCurrentWindow();
-      await appWindow.hide();
-      setTimeout(async () => {
-        const { invoke } = await import('@tauri-apps/api/core');
-        await invoke('simulate_paste_action');
-      }, 100);
     } else {
       await navigator.clipboard.writeText(selectedReply);
-      alertService.success('已复制到剪贴板！\n\n' + selectedReply);
     }
-    
-    resetToIdle();
   } catch (error) {
-    console.error('Injection failed:', error);
+    console.error('Copy failed:', error);
   }
 }
 
@@ -374,7 +388,7 @@ function goBack() {
           </svg>
         </button>
         <button
-          v-if="isTauri"
+          v-if="isTauri && !isMobileDevice"
           @click="minimizeToTray"
           class="icon-btn"
           title="最小化到托盘"
@@ -384,7 +398,7 @@ function goBack() {
           </svg>
         </button>
         <button
-          v-if="isTauri"
+          v-if="isTauri && !isMobileDevice"
           @click="closeWindow"
           class="icon-btn hover:text-red-500 hover:bg-red-50"
           title="关闭"
@@ -409,7 +423,29 @@ function goBack() {
           <p class="text-sm" style="color: var(--text-tertiary);">等待您的下一个对话</p>
         </div>
 
-        <div class="flex items-center justify-between p-4 rounded-xl" style="background: var(--bg-secondary); border: 1px solid var(--border-light);">
+        <div v-if="isMobileDevice" class="p-4 rounded-xl" style="background: var(--bg-secondary); border: 1px solid var(--border-light);">
+          <p class="text-sm font-medium mb-3 flex items-center gap-2" style="color: var(--text-secondary);">
+            <svg class="w-4 h-4" style="color: var(--accent-warm);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            输入对话内容
+          </p>
+          <textarea
+            v-model="manualInputText"
+            placeholder="粘贴或输入对话内容，例如：&#10;张三: 明天下午开会吗？&#10;我: 是的，三点开始"
+            class="input-field resize-none"
+            rows="4"
+          ></textarea>
+          <button
+            @click="handleManualCapture"
+            :disabled="!manualInputText.trim()"
+            class="btn-primary w-full mt-3"
+          >
+            开始推演
+          </button>
+        </div>
+
+        <div v-if="!isMobileDevice" class="flex items-center justify-between p-4 rounded-xl" style="background: var(--bg-secondary); border: 1px solid var(--border-light);">
           <span class="text-sm font-medium flex items-center gap-2" style="color: var(--text-secondary);">
             <svg class="w-4 h-4" style="color: var(--text-tertiary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -504,13 +540,23 @@ function goBack() {
           <span class="text-sm font-medium" style="color: #16a34a;">已建立 {{ personaCount }} 个风格画像</span>
         </div>
 
-        <div v-if="!isTauri" class="flex items-center gap-3 p-4 rounded-xl" style="background: rgba(139, 115, 85, 0.06); border: 1px solid rgba(139, 115, 85, 0.1);">
+        <div v-if="!isTauri && !isMobileDevice" class="flex items-center gap-3 p-4 rounded-xl" style="background: rgba(139, 115, 85, 0.06); border: 1px solid rgba(139, 115, 85, 0.1);">
           <svg class="w-5 h-5 flex-shrink-0" style="color: var(--accent-warm);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
           </svg>
           <div>
             <p class="text-sm font-medium" style="color: var(--text-primary);">浏览器测试模式</p>
             <p class="text-xs mt-0.5" style="color: var(--text-secondary);">按 {{ appStore.settings.shortcutKey }} 模拟快捷键</p>
+          </div>
+        </div>
+
+        <div v-if="isMobileDevice" class="flex items-center gap-3 p-4 rounded-xl" style="background: rgba(139, 115, 85, 0.06); border: 1px solid rgba(139, 115, 85, 0.1);">
+          <svg class="w-5 h-5 flex-shrink-0" style="color: var(--accent-warm);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+          </svg>
+          <div>
+            <p class="text-sm font-medium" style="color: var(--text-primary);">移动端模式</p>
+            <p class="text-xs mt-0.5" style="color: var(--text-secondary);">在上方输入对话内容开始使用</p>
           </div>
         </div>
 
@@ -802,6 +848,7 @@ function goBack() {
       :title="alertService.options.title"
       :type="alertService.options.type"
       :confirm-text="alertService.options.confirmText"
+      :cancel-text="alertService.options.cancelText"
       @close="alertService.close()"
       @confirm="alertService.confirm()"
     />

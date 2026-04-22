@@ -2,16 +2,17 @@
 import { ref } from 'vue';
 import type { ReplyStrategy } from '@/types';
 
-defineProps<{
+const props = withDefaults(defineProps<{
   strategy: ReplyStrategy;
   index: number;
-}>();
+}>(), {});
 
 const emit = defineEmits<{
   select: [content: string];
 }>();
 
 const isExpanded = ref(false);
+const isCopying = ref(false);
 
 function getTagColor(label: string): string {
   const colors: Record<string, string> = {
@@ -68,6 +69,20 @@ function getRiskBg(riskLevel: string): string {
 function toggleExpand() {
   isExpanded.value = !isExpanded.value;
 }
+
+async function handleCopy() {
+  isCopying.value = true;
+  try {
+    await navigator.clipboard.writeText(props.strategy.content);
+    setTimeout(() => {
+      isCopying.value = false;
+    }, 1500);
+  } catch (error) {
+    console.error('Copy failed:', error);
+    isCopying.value = false;
+  }
+  emit('select', props.strategy.content);
+}
 </script>
 
 <template>
@@ -79,32 +94,32 @@ function toggleExpand() {
       border: '1px solid var(--border-subtle)',
       ...(isExpanded ? { boxShadow: 'var(--shadow-md)' } : {})
     }"
-    @click="emit('select', strategy.content)"
+    @click="toggleExpand"
   >
     <div class="p-4">
       <div class="flex items-start gap-3">
-        <div class="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" :style="{ background: getTagColor(strategy.style) }">
-          <span class="text-xs font-bold" :style="{ color: getTagTextColor(strategy.style) }">#{{ index + 1 }}</span>
+        <div class="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" :style="{ background: getTagColor(props.strategy.style) }">
+          <span class="text-xs font-bold" :style="{ color: getTagTextColor(props.strategy.style) }">#{{ props.index + 1 }}</span>
         </div>
 
         <div class="flex-1 min-w-0">
           <div class="flex items-center justify-between mb-1.5">
             <span
               class="text-[10px] px-2 py-0.5 rounded-lg font-medium"
-              :style="{ background: getTagColor(strategy.style), color: getTagTextColor(strategy.style) }"
+              :style="{ background: getTagColor(props.strategy.style), color: getTagTextColor(props.strategy.style) }"
             >
-              {{ strategy.style }}
+              {{ props.strategy.style }}
             </span>
 
             <div class="flex items-center gap-2">
               <span
                 class="text-[10px] px-2 py-0.5 rounded-lg flex items-center gap-1"
-                :style="{ background: getRiskBg(strategy.riskLevel), color: getRiskColor(strategy.riskLevel) }"
+                :style="{ background: getRiskBg(props.strategy.riskLevel), color: getRiskColor(props.strategy.riskLevel) }"
               >
                 <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
-                {{ strategy.riskLevel === 'low' ? '低风险' : strategy.riskLevel === 'medium' ? '中风险' : '高风险' }}
+                {{ props.strategy.riskLevel === 'low' ? '低风险' : props.strategy.riskLevel === 'medium' ? '中风险' : '高风险' }}
               </span>
               <button
                 @click.stop="toggleExpand"
@@ -124,7 +139,7 @@ function toggleExpand() {
             :class="isExpanded ? 'text-[var(--text-primary)]' : 'line-clamp-2'"
             style="color: var(--text-primary);"
           >
-            {{ strategy.content }}
+            {{ props.strategy.content }}
           </p>
 
           <div v-if="isExpanded" class="mt-3 pt-3" style="border-top: 1px solid var(--border-light);">
@@ -134,7 +149,7 @@ function toggleExpand() {
               </svg>
               战术目标
             </p>
-            <p class="text-xs leading-relaxed" style="color: var(--text-tertiary);">{{ strategy.tacticalGoal }}</p>
+            <p class="text-xs leading-relaxed" style="color: var(--text-tertiary);">{{ props.strategy.tacticalGoal }}</p>
 
             <p class="text-xs font-medium mt-2 mb-1" style="color: var(--text-secondary);">
               <svg class="w-3 h-3 inline-block mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -142,20 +157,29 @@ function toggleExpand() {
               </svg>
               预期反应
             </p>
-            <p class="text-xs leading-relaxed" style="color: var(--text-tertiary);">{{ strategy.expectedReaction }}</p>
+            <p class="text-xs leading-relaxed" style="color: var(--text-tertiary);">{{ props.strategy.expectedReaction }}</p>
           </div>
         </div>
       </div>
 
       <div v-if="isExpanded" class="mt-4 flex gap-2">
         <button
+          @click.stop="handleCopy"
           class="flex-1 py-2.5 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2"
-          style="background: linear-gradient(135deg, var(--accent-warm) 0%, #6b5544 100%); color: white;"
+          :style="{
+            background: isCopying ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'linear-gradient(135deg, var(--accent-warm) 0%, #6b5544 100%)',
+            color: 'white',
+            transform: isCopying ? 'scale(0.98)' : 'scale(1)',
+            boxShadow: isCopying ? '0 2px 8px rgba(16, 185, 129, 0.4)' : 'none'
+          }"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+          <svg v-if="!isCopying" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 5H6a2 2 0 00-2 2v12a2 0 002 2h10a2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2m0 0h2a2 2 0 002 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
           </svg>
-          复制回复
+          <svg v-else class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+          </svg>
+          {{ isCopying ? '已复制！' : '复制回复' }}
         </button>
       </div>
     </div>

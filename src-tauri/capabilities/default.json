@@ -18,8 +18,17 @@
     "core:window:allow-set-always-on-top",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister",
-    "global-shortcut:allow-is-registered"
+    {
+      "identifier": "global-shortcut:allow-register",
+      "platforms": ["linux", "macOS", "windows"]
+    },
+    {
+      "identifier": "global-shortcut:allow-unregister",
+      "platforms": ["linux", "macOS", "windows"]
+    },
+    {
+      "identifier": "global-shortcut:allow-is-registered",
+      "platforms": ["linux", "macOS", "windows"]
+    }
   ]
 }

@@ -1,11 +1,15 @@
+use tauri::Manager;
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use enigo::{
     Direction::{Click, Press, Release},
     Enigo, Key, Keyboard, Settings,
 };
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
-    Manager,
 };
 
 #[cfg(target_os = "windows")]
@@ -15,16 +19,41 @@ use windows::Win32::Graphics::Gdi::*;
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+#[cfg(target_os = "windows")]
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba, ImageFormat};
+#[cfg(target_os = "windows")]
 use base64::Engine;
 
 #[tauri::command]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn simulate_paste_action() -> Result<(), String> {
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
     enigo.key(Key::Control, Press).map_err(|e| e.to_string())?;
     enigo.key(Key::Unicode('v'), Click).map_err(|e| e.to_string())?;
     enigo.key(Key::Control, Release).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn simulate_copy_action() -> Result<(), String> {
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
+    enigo.key(Key::Control, Press).map_err(|e| e.to_string())?;
+    enigo.key(Key::Unicode('c'), Click).map_err(|e| e.to_string())?;
+    enigo.key(Key::Control, Release).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn simulate_copy_action() -> Result<(), String> {
+    Err("此功能仅支持桌面平台".to_string())
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn simulate_paste_action() -> Result<(), String> {
+    Err("此功能仅支持桌面平台".to_string())
 }
 
 #[tauri::command]
@@ -66,7 +95,6 @@ fn find_wechat_window() -> Result<HWND, String> {
 unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let hwnd_ptr = &mut *(lparam.0 as *mut Option<HWND>);
     
-    // 只要找到任何匹配的窗口，就立即返回
     if hwnd_ptr.is_some() {
         return TRUE;
     }
@@ -84,7 +112,6 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
         return TRUE;
     }
 
-    // 更宽松的匹配条件
     let title_lower = title_str.to_lowercase();
     let class_lower = class_str.to_lowercase();
     
@@ -97,7 +124,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: HWND, lparam: LPARAM) -> B
     if matches_wechat {
         *hwnd_ptr = Some(hwnd);
         println!("[Context-Pod] Found WeChat window: title='{}', class='{}'", title_str, class_str);
-        return FALSE; // 停止枚举
+        return FALSE;
     }
 
     TRUE
@@ -389,6 +416,7 @@ fn get_active_window_title() -> Result<String, String> {
     Err("此功能仅支持 Windows 平台".to_string())
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn restore_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         println!("[Context-Pod] Restoring window...");
@@ -415,61 +443,79 @@ fn restore_window(app: &tauri::AppHandle) {
     }
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn setup_desktop_features(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
+    let hide_item = MenuItem::with_id(app, "hide", "隐藏窗口", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    
+    let menu = Menu::with_items(app, &[&show_item, &hide_item, &quit_item])?;
+    
+    let _tray = TrayIconBuilder::new()
+        .icon(app.default_window_icon().unwrap().clone())
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| {
+            println!("[Context-Pod] Menu event: {:?}", event.id);
+            match event.id.as_ref() {
+                "show" => restore_window(app),
+                "hide" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.hide();
+                    }
+                }
+                "quit" => {
+                    app.exit(0);
+                }
+                _ => {}
+            }
+        })
+        .on_tray_icon_event(|tray, event| {
+            println!("[Context-Pod] Tray event: {:?}", event);
+            match event {
+                TrayIconEvent::DoubleClick { button, .. } => {
+                    println!("[Context-Pod] Double click detected: {:?}", button);
+                    restore_window(tray.app_handle());
+                }
+                _ => {}
+            }
+        })
+        .build(app)?;
+    
+    println!("[Context-Pod] Tray icon created with double-click support");
+    
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            simulate_copy_action,
             simulate_paste_action,
             show_window,
             hide_window,
             capture_clipboard,
             capture_wechat_name_roi,
             get_active_window_title
-        ])
+        ]);
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
-            let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
-            let hide_item = MenuItem::with_id(app, "hide", "隐藏窗口", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            
-            let menu = Menu::with_items(app, &[&show_item, &hide_item, &quit_item])?;
-            
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| {
-                    println!("[Context-Pod] Menu event: {:?}", event.id);
-                    match event.id.as_ref() {
-                        "show" => restore_window(app),
-                        "hide" => {
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.hide();
-                            }
-                        }
-                        "quit" => {
-                            app.exit(0);
-                        }
-                        _ => {}
-                    }
-                })
-                .on_tray_icon_event(|tray, event| {
-                    println!("[Context-Pod] Tray event: {:?}", event);
-                    match event {
-                        TrayIconEvent::DoubleClick { button, .. } => {
-                            println!("[Context-Pod] Double click detected: {:?}", button);
-                            restore_window(tray.app_handle());
-                        }
-                        _ => {}
-                    }
-                })
-                .build(app)?;
-            
-            println!("[Context-Pod] Tray icon created with double-click support");
-            
+            setup_desktop_features(app.handle())?;
             Ok(())
-        })
+        });
+
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let builder = builder.setup(|_app| {
+        println!("[Context-Pod] Mobile app started");
+        Ok(())
+    });
+
+    builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

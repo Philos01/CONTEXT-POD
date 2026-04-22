@@ -471,7 +471,10 @@ function toggleBufferExpand() {
   }
 }
 
-function clearSelfBuffer() {
+async function clearSelfBuffer() {
+  const confirmed = await alertService.showConfirm('确定要清除所有对话缓存吗？');
+  if (!confirmed) return;
+  
   const buffer = getBufferByContact('自我');
   const ids = buffer.map(e => e.id);
   
@@ -481,6 +484,16 @@ function clearSelfBuffer() {
   
   loadSelfBuffer();
   alertService.success('缓存已清除');
+}
+
+async function deleteSingleSelfBufferEntry(entryId: string) {
+  const confirmed = await alertService.showConfirm('确定要删除这条缓存记录吗？');
+  if (!confirmed) return;
+  
+  if (deleteBufferEntry(entryId)) {
+    loadSelfBuffer();
+    alertService.success('已删除');
+  }
 }
 
 function startEditSelfPersona() {
@@ -678,6 +691,15 @@ onMounted(() => {
                     {{ entry.role === 'partner' ? '对方' : '我' }}
                   </span>
                   <span class="flex-1">{{ entry.content }}</span>
+                  <button
+                    @click.stop="deleteSingleSelfBufferEntry(entry.id)"
+                    class="p-0.5 rounded hover:bg-red-100 transition-colors flex-shrink-0"
+                    title="删除这条记录"
+                  >
+                    <svg class="w-3.5 h-3.5 text-red-400 hover:text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
                 </div>
               </div>
             </div>
