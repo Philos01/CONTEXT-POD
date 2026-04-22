@@ -1,12 +1,12 @@
 import { ref, onMounted } from 'vue';
-
-const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+import { isTauri, isMobile } from '@/utils/platform';
 
 export function useWindowManager() {
-  const isVisible = ref(false);
+  const isVisible = ref(true);
+  const isMobileDevice = isMobile();
 
   const show = async () => {
-    if (isTauri) {
+    if (isTauri && !isMobileDevice) {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       const appWindow = getCurrentWindow();
       await appWindow.show();
@@ -16,7 +16,7 @@ export function useWindowManager() {
   };
 
   const hide = async () => {
-    if (isTauri) {
+    if (isTauri && !isMobileDevice) {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       const appWindow = getCurrentWindow();
       await appWindow.hide();
@@ -33,7 +33,7 @@ export function useWindowManager() {
   };
 
   onMounted(async () => {
-    if (isTauri) {
+    if (isTauri && !isMobileDevice) {
       try {
         const { getCurrentWindow } = await import('@tauri-apps/api/window');
         const appWindow = getCurrentWindow();
@@ -49,5 +49,6 @@ export function useWindowManager() {
     show,
     hide,
     toggle,
+    isMobileDevice,
   };
 }

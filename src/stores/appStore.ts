@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type { AppSettings, LLMProvider } from '@/types';
+import type { AppSettings, LLMProvider, WorkflowStage } from '@/types';
 
 const STORAGE_KEY = 'context-pod-settings';
 
@@ -49,7 +49,7 @@ function loadSettings(): AppSettings {
 export const useAppStore = defineStore('app', () => {
   const settings = ref<AppSettings>(loadSettings());
   const isInitialized = ref(false);
-  const workflowStage = ref<'idle' | 'capturing' | 'extracting' | 'retrieving' | 'generating' | 'ready'>('idle');
+  const workflowStage = ref<WorkflowStage>('idle');
   const workflowMessage = ref('');
 
   const isConfigured = computed(() => !!settings.value.apiKey);

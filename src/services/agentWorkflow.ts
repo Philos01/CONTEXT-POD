@@ -1,9 +1,36 @@
 import { retrieveMemory } from './memoryService';
-import type { AgentState, AppSettings, ConversationMessage } from '@/types';
+import { getPersona, getDynamicPersona, formatPersonaForPrompt, formatDynamicPersonaForPrompt, applyDecay } from './personaService';
+import { pushMultipleToBuffer, getPendingCountsByContact, EVOLUTION_THRESHOLD } from './evolutionEngine';
+import { classifyConversationPhase, getPhaseLabel } from './conversationStateEngine';
+import { buildFeedbackSection } from './feedbackEvaluator';
+import type { AgentState, AppSettings, ConversationMessage, StylePersona, DynamicPersonaSchema, ConversationPhase, TacticalGoal } from '@/types';
+import { CONVERSATION_PHASE_LABELS, TACTICAL_GOAL_LABELS } from '@/types';
 import { generateStrategies } from './llmService';
+import { getPrompt, formatPrompt } from './promptService';
+import { getLogger } from './logger';
+
+const logger = getLogger('agentWorkflow');
 
 const conversationHistory: ConversationMessage[] = [];
 const MAX_HISTORY = 10;
+
+class PerformanceMonitor {
+  private timings: Map<string, number> = new Map();
+
+  start(label: string) {
+    this.timings.set(label, performance.now());
+  }
+
+  end(label: string): number {
+    const start = this.timings.get(label);
+    if (start === undefined) return 0;
+    const duration = performance.now() - start;
+    console.log(`[Context-Pod] Timer ${label}: ${duration.toFixed(2)}ms`);
+    return duration;
+  }
+}
+
+const perf = new PerformanceMonitor();
 
 function extractPersonName(rawText: string): string {
   const patterns = [
@@ -27,45 +54,20 @@ function extractPersonName(rawText: string): string {
     }
   }
 
-  const lines = rawText.split('\n').filter(line => line.trim());
-  if (lines.length > 0) {
-    const firstLine = lines[0].trim();
-    const colonMatch = firstLine.match(/^([^：:]+)[：:]/);
-    if (colonMatch && colonMatch[1]) {
-      const name = colonMatch[1].trim();
-      if (name.length > 0 && name.length < 20 && !isCommonWord(name)) {
-        return name;
-      }
-    }
-  }
+  return extractWeChatNickname(rawText) || '未知联系人';
+}
 
-  const senderPattern = /([^\n：:]+)[：:][^\n]*(?:\n|$)/g;
-  const senders = new Set<string>();
-  let match;
-  while ((match = senderPattern.exec(rawText)) !== null) {
-    const name = match[1].trim();
-    if (name.length > 0 && name.length < 20 && !isCommonWord(name)) {
-      senders.add(name);
-    }
-  }
-  
-  const senderList = Array.from(senders);
-  if (senderList.length === 2) {
-    const meKeywords = ['我', 'me', '自己', '本人'];
-    for (let i = 0; i < senderList.length; i++) {
-      const name = senderList[i].toLowerCase();
-      if (meKeywords.some(kw => name.includes(kw))) {
-        return senderList[1 - i];
-      }
-    }
-    return senderList[0];
-  }
-
-  if (senderList.length === 1) {
-    return senderList[0];
-  }
-
-  return '未知联系人';
+function isCommonWord(word: string): boolean {
+  const commonWords = [
+    '我', '你', '他', '她', '它', '我们', '你们', '他们',
+    '这', '那', '什么', '怎么', '为什么', '哪里', '谁',
+    '的', '了', '是', '在', '有', '和', '与', '或',
+    '好', '嗯', '哦', '啊', '哈', '嘿', '呀',
+    '收到', '好的', '明白', '知道', '可以', '行',
+    'me', 'you', 'he', 'she', 'it', 'we', 'they',
+    'ok', 'yes', 'no', 'hi', 'hello', 'hey',
+  ];
+  return commonWords.includes(word.toLowerCase());
 }
 
 function extractWeChatNickname(rawText: string): string | null {
@@ -88,7 +90,7 @@ function extractWeChatNickname(rawText: string): string | null {
   return null;
 }
 
-function parseConversation(rawText: string, targetPerson: string): ConversationMessage[] {
+function parseConversation(rawText: string, _targetPerson: string): ConversationMessage[] {
   const messages: ConversationMessage[] = [];
   const lines = rawText.split('\n').filter(line => line.trim());
 
@@ -113,52 +115,94 @@ function parseConversation(rawText: string, targetPerson: string): ConversationM
   return messages;
 }
 
+function buildHistoryText(history: ConversationMessage[]): string {
+  if (history.length === 0) return '';
+  const recentHistory = history.slice(-MAX_HISTORY);
+  return recentHistory.map(msg => `${msg.sender}: ${msg.content}`).join('\n');
+}
+
 function buildContextPrompt(
   rawText: string,
   targetPerson: string,
   memoryData: string,
-  history: ConversationMessage[]
+  history: ConversationMessage[],
+  persona: StylePersona | null,
+  dynamicPersona: DynamicPersonaSchema | null,
+  conversationPhase: ConversationPhase,
+  tacticalGoal: TacticalGoal,
+  feedbackSection: string,
+  selfPersona: DynamicPersonaSchema | null,
+  contactIdentity?: string
 ): string {
-  let contextSection = '';
-
+  let historySection = '';
   if (history.length > 0) {
-    const recentHistory = history.slice(-MAX_HISTORY);
-    contextSection = '\n\n【历史对话记录】\n';
-    for (const msg of recentHistory) {
-      contextSection += `${msg.sender}: ${msg.content}\n`;
-    }
+    historySection = buildHistoryText(history);
   }
 
   let memorySection = '';
   if (memoryData !== '暂无此人记录') {
-    memorySection = `\n\n【${targetPerson}的性格档案】\n${memoryData}`;
+    memorySection = `【${targetPerson}的性格档案】\n${memoryData}`;
   }
 
-  return `你正在和【${targetPerson}】对话。${memorySection}
-${contextSection}
+  let personaSection = '';
+  if (dynamicPersona && dynamicPersona.summary && dynamicPersona.summary !== '画像提取失败') {
+    personaSection = formatDynamicPersonaForPrompt(dynamicPersona);
+  } else if (persona && persona.summary && persona.summary !== '风格提取失败') {
+    personaSection = formatPersonaForPrompt(persona);
+  }
+
+  let selfPersonaSection = '';
+  if (selfPersona && selfPersona.summary && selfPersona.summary !== '画像提取失败') {
+    const identityStr = selfPersona.powerIdentity
+      .filter(p => p.confidence >= 0.3)
+      .map(p => p.trait)
+      .join('；');
+    const eventsStr = selfPersona.experienceEvents.length > 0
+      ? selfPersona.experienceEvents.slice(-3).map(e => e.behaviorTrendDesc).join('；')
+      : '无';
+    selfPersonaSection = `【你的社交画像】
+- 社交定位: ${identityStr || '待探索'}
+- 综合热度: ${selfPersona.temperature}/10
+- 沟通风格: ${selfPersona.textStyle}
+- 近期特征: ${eventsStr}
+- 总结: ${selfPersona.summary}`;
+  }
+
+  const phaseLabel = CONVERSATION_PHASE_LABELS[conversationPhase] || conversationPhase;
+  const goalLabel = TACTICAL_GOAL_LABELS[tacticalGoal] || tacticalGoal;
+  const identityContext = contactIdentity ? `\n背景提示：对方是你的${contactIdentity}，请据此选择合适的语气和分寸。` : '';
+
+  const replyPrompt = getPrompt('reply-generation');
+  if (replyPrompt) {
+    return formatPrompt(replyPrompt, {
+      targetPerson,
+      personaSection: personaSection || '暂无对手画像数据',
+      selfPersonaSection: selfPersonaSection || '',
+      historySection: historySection || '暂无近期交互记录',
+      feedbackSection: feedbackSection || '',
+      conversationPhase: phaseLabel,
+      tacticalGoal: goalLabel,
+      rawText,
+      identityContext,
+    });
+  }
+
+  return `你正在和【${targetPerson}】对话。${identityContext}
+${memorySection}
+
+${selfPersonaSection ? selfPersonaSection + '\n\n' : ''}${personaSection}
+
+${historySection ? `【历史对话】\n${historySection}` : ''}
+
+${feedbackSection}
+
+当前关系态势：${phaseLabel}
+当前用户目标：${goalLabel}
 
 【当前聊天上下文】
 ${rawText}
 
-请根据以上所有信息（历史对话+性格档案+当前上下文），生成三种高情商的回复策略。
-
-要求：
-1. 回复要结合历史对话的语境，保持连贯性
-2. 考虑对方性格特点，选择最合适的措辞
-3. 如果历史对话中有未完成的话题，要延续下去`;
-}
-
-function isCommonWord(word: string): boolean {
-  const commonWords = [
-    '我', '你', '他', '她', '它', '我们', '你们', '他们',
-    '这', '那', '什么', '怎么', '为什么', '哪里', '谁',
-    '的', '了', '是', '在', '有', '和', '与', '或',
-    '好', '嗯', '哦', '啊', '哈', '嘿', '呀',
-    '收到', '好的', '明白', '知道', '可以', '行',
-    'me', 'you', 'he', 'she', 'it', 'we', 'they',
-    'ok', 'yes', 'no', 'hi', 'hello', 'hey',
-  ];
-  return commonWords.includes(word.toLowerCase());
+请生成三种高情商的回复策略。`;
 }
 
 export function addToHistory(messages: ConversationMessage[]) {
@@ -168,12 +212,43 @@ export function addToHistory(messages: ConversationMessage[]) {
   }
 }
 
+export function pushToChatBuffer(targetPerson: string, messages: ConversationMessage[]): void {
+  const bufferEntries = messages.map(m => ({
+    contactName: targetPerson,
+    content: m.content,
+    role: m.role === 'other' ? 'partner' as const : 'user' as const,
+  }));
+  pushMultipleToBuffer(bufferEntries);
+  console.log(`[Context-Pod] Pushed ${bufferEntries.length} entries to chat buffer for "${targetPerson}"`);
+
+  const pending = getPendingCountsByContact();
+  if (pending[targetPerson] && pending[targetPerson] >= EVOLUTION_THRESHOLD) {
+    console.log(`[Context-Pod] 💡 "${targetPerson}" has ${pending[targetPerson]} pending entries (threshold: ${EVOLUTION_THRESHOLD}), evolution will trigger on idle`);
+  }
+}
+
 export function clearHistory() {
   conversationHistory.length = 0;
 }
 
 export function getHistory(): ConversationMessage[] {
   return [...conversationHistory];
+}
+
+export async function identifyContactAsync(rawText: string): Promise<{ name: string; confidence: number; source: string }> {
+  console.log('[Context-Pod] Identifying contact from text...');
+
+  const wechatName = extractWeChatNickname(rawText);
+  if (wechatName) {
+    return { name: wechatName, confidence: 0.8, source: '微信格式' };
+  }
+
+  const normalName = extractPersonName(rawText);
+  if (normalName !== '未知联系人') {
+    return { name: normalName, confidence: 0.9, source: '聊天格式' };
+  }
+
+  return { name: '未知联系人', confidence: 0, source: '' };
 }
 
 export function identifyContact(rawText: string): { name: string; confidence: number; source: string } {
@@ -192,37 +267,71 @@ export function identifyContact(rawText: string): { name: string; confidence: nu
 
 export async function runWorkflow(
   rawText: string,
-  settings: AppSettings
+  settings: AppSettings,
+  tacticalGoal: TacticalGoal = 'stabilize',
+  targetPersonOverride?: string,
+  contactIdentity?: string
 ): Promise<AgentState> {
+  logger.info('Starting workflow execution', { targetPerson: targetPersonOverride, identity: contactIdentity });
+  
   try {
-    const targetPerson = extractPersonName(rawText);
+    const identifiedName = targetPersonOverride || extractPersonName(rawText);
+    logger.debug('Contact identified', { name: identifiedName });
 
     let memoryData = '暂无此人记录';
-    if (targetPerson !== '未知联系人') {
+    if (identifiedName !== '未知联系人') {
       try {
-        memoryData = await retrieveMemory(targetPerson);
+        memoryData = await retrieveMemory(identifiedName);
+        logger.debug('Memory retrieved', { name: identifiedName });
       } catch {
-        // use default
+        logger.warning('Memory retrieval failed', { name: identifiedName });
       }
     }
 
-    const parsedMessages = parseConversation(rawText, targetPerson);
+    const parsedMessages = parseConversation(rawText, identifiedName);
     if (parsedMessages.length > 0) {
       addToHistory(parsedMessages);
     }
 
-    const finalPrompt = buildContextPrompt(rawText, targetPerson, memoryData, conversationHistory);
+    const dynamicPersona = identifiedName !== '未知联系人' ? getDynamicPersona(identifiedName) : null;
+    const persona = identifiedName !== '未知联系人' ? getPersona(identifiedName) : null;
+    const selfPersona = getDynamicPersona('自我');
+    const feedbackSection = identifiedName !== '未知联系人' ? buildFeedbackSection(identifiedName) : '';
 
+    let conversationPhase: ConversationPhase = 'probing';
+    try {
+      const historyText = buildHistoryText(conversationHistory);
+      const phaseResult = await classifyConversationPhase(rawText, historyText, settings);
+      conversationPhase = phaseResult.phase;
+      logger.debug('Conversation phase classified', { phase: getPhaseLabel(conversationPhase), confidence: phaseResult.confidence });
+    } catch (error) {
+      logger.error('Phase classification failed', error);
+    }
+
+    logger.info('Building context prompt');
+    const finalPrompt = buildContextPrompt(
+      rawText, identifiedName, memoryData, conversationHistory,
+      persona, dynamicPersona, conversationPhase, tacticalGoal, feedbackSection, selfPersona,
+      contactIdentity
+    );
+
+    logger.info('Generating strategies');
     const strategies = await generateStrategies(finalPrompt, settings);
+    logger.info('Workflow completed successfully', { strategyCount: strategies.length, phase: getPhaseLabel(conversationPhase) });
 
     return {
       rawText,
-      targetPerson,
+      targetPerson: identifiedName,
       memoryData,
       finalPrompt,
       strategies,
+      conversationPhase,
+      tacticalGoal,
+      personaSection: dynamicPersona ? formatDynamicPersonaForPrompt(dynamicPersona) : (persona ? formatPersonaForPrompt(persona) : ''),
+      feedbackSection,
     };
   } catch (error) {
+    logger.error('Workflow execution failed', error);
     console.error('Workflow execution failed:', error);
     return {
       rawText,
@@ -230,10 +339,14 @@ export async function runWorkflow(
       memoryData: '工作流执行异常',
       finalPrompt: rawText,
       strategies: [
-        { label: 'A', style: '顺从推进', content: '好的，收到！' },
-        { label: 'B', style: '委婉甩锅', content: '这个我再确认下' },
-        { label: 'C', style: '幽默化解', content: '收到，安排上了' },
+        { label: 'A', style: '端水软垫铺路', tacticalGoal: '稳住局面', content: '好的，收到！', riskLevel: 'low', expectedReaction: '对方可能暂时缓和' },
+        { label: 'B', style: '反向提问设限', tacticalGoal: '转移压力', content: '这个我再确认下', riskLevel: 'medium', expectedReaction: '对方可能继续追问' },
+        { label: 'C', style: '直接表达诉求', tacticalGoal: '表明立场', content: '收到，安排上了', riskLevel: 'high', expectedReaction: '对方可能不满' },
       ],
+      conversationPhase: 'probing',
+      tacticalGoal,
+      personaSection: '',
+      feedbackSection: '',
     };
   }
 }
@@ -241,46 +354,120 @@ export async function runWorkflow(
 export async function runWorkflowStream(
   rawText: string,
   settings: AppSettings,
-  onProgress: (stage: string, message: string) => void
+  onProgress: (stage: string, message: string) => void,
+  tacticalGoal: TacticalGoal = 'stabilize',
+  targetPerson?: string,
+  contactIdentity?: string
 ): Promise<AgentState> {
-  onProgress('extracting', '正在识别对话对象...');
+  perf.start('Total Workflow');
 
-  const identification = identifyContact(rawText);
-  const targetPerson = identification.name;
-  console.log(`[Context-Pod] Identified: "${targetPerson}" (confidence: ${identification.confidence}, source: ${identification.source})`);
-  
-  onProgress('retrieving', `正在检索【${targetPerson}】的记忆档案...`);
-
-  let memoryData = '暂无此人记录';
-  if (targetPerson !== '未知联系人') {
-    try {
-      memoryData = await retrieveMemory(targetPerson);
-      console.log(`[Context-Pod] Memory data: "${memoryData}"`);
-    } catch {
-      // use default
-    }
+  let identifiedName = targetPerson;
+  if (!identifiedName) {
+    perf.start('Identify Contact');
+    onProgress('extracting', '正在识别对话对象...');
+    const identification = await identifyContactAsync(rawText);
+    identifiedName = identification.name;
+    perf.end('Identify Contact');
+    console.log(`[Context-Pod] Identified: "${identifiedName}" (confidence: ${identification.confidence}, source: ${identification.source})`);
   }
 
-  const parsedMessages = parseConversation(rawText, targetPerson);
+  perf.start('Retrieve Data');
+  onProgress('retrieving', `正在检索【${identifiedName}】的记忆档案...`);
+
+  const [memoryData, persona, dynamicPersona, selfPersona] = await Promise.all([
+    (async () => {
+      if (identifiedName !== '未知联系人') {
+        try {
+          const data = await retrieveMemory(identifiedName);
+          console.log(`[Context-Pod] Memory data: "${data}"`);
+          return data;
+        } catch {
+          return '暂无此人记录';
+        }
+      }
+      return '暂无此人记录';
+    })(),
+    Promise.resolve(identifiedName !== '未知联系人' ? getPersona(identifiedName) : null),
+    Promise.resolve(identifiedName !== '未知联系人' ? getDynamicPersona(identifiedName) : null),
+    Promise.resolve(getDynamicPersona('自我')), // 加载赛博捏脸结果
+  ]);
+
+  perf.end('Retrieve Data');
+
+  if (dynamicPersona) {
+    console.log(`[Context-Pod] Found dynamic persona for "${identifiedName}": ${dynamicPersona.summary}`);
+    applyDecay(dynamicPersona);
+  } else if (persona) {
+    console.log(`[Context-Pod] Found style persona for "${identifiedName}": ${persona.summary}`);
+  }
+
+  const parsedMessages = parseConversation(rawText, identifiedName);
   if (parsedMessages.length > 0) {
     addToHistory(parsedMessages);
     console.log(`[Context-Pod] Added ${parsedMessages.length} messages to history (total: ${conversationHistory.length})`);
+
+    if (identifiedName !== '未知联系人') {
+      pushToChatBuffer(identifiedName, parsedMessages);
+    }
   }
 
-  onProgress('generating', '正在推演回复策略...');
+  // 提前构建历史文本（供并行使用）
+  const historyText = buildHistoryText(conversationHistory);
 
-  const finalPrompt = buildContextPrompt(rawText, targetPerson, memoryData, conversationHistory);
+  // 🔄 并行执行：对话阶段分类 + 反馈评估
+  perf.start('Classify Phase');
+  perf.start('Evaluate Feedback');
+
+  const [phaseResult, feedbackSection] = await Promise.all([
+    (async () => {
+      onProgress('classifying', '正在分析对话局势...');
+      try {
+        const result = await classifyConversationPhase(rawText, historyText, settings);
+        perf.end('Classify Phase');
+        console.log(`[Context-Pod] Phase: ${getPhaseLabel(result.phase)} (${result.reasoning})`);
+        return result;
+      } catch (error) {
+        perf.end('Classify Phase');
+        console.error('[Context-Pod] Phase classification failed:', error);
+        console.log('[Context-Pod] Phase classification failed, using default');
+        return { phase: 'probing' as ConversationPhase, confidence: 0, reasoning: '默认' };
+      }
+    })(),
+    (async () => {
+      onProgress('evaluating', '正在复盘历史策略...');
+      const section = identifiedName !== '未知联系人' ? buildFeedbackSection(identifiedName) : '';
+      perf.end('Evaluate Feedback');
+      return section;
+    })()
+  ]);
+
+  const conversationPhase = phaseResult.phase;
+
+  perf.start('Generate Strategies');
+  onProgress('generating', `正在推演回复策略（${getPhaseLabel(conversationPhase)}·${TACTICAL_GOAL_LABELS[tacticalGoal]}）...`);
+
+  const finalPrompt = buildContextPrompt(
+    rawText, identifiedName, memoryData, conversationHistory,
+    persona, dynamicPersona, conversationPhase, tacticalGoal, feedbackSection, selfPersona,
+    contactIdentity
+  );
 
   const strategies = await generateStrategies(finalPrompt, settings);
+  perf.end('Generate Strategies');
 
   onProgress('ready', '推演完成');
+  perf.end('Total Workflow');
 
   return {
     rawText,
-    targetPerson,
+    targetPerson: identifiedName,
     memoryData,
     finalPrompt,
     strategies,
+    conversationPhase,
+    tacticalGoal,
+    personaSection: dynamicPersona ? formatDynamicPersonaForPrompt(dynamicPersona) : (persona ? formatPersonaForPrompt(persona) : ''),
+    feedbackSection,
   };
 }
 

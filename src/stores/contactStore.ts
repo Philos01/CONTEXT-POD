@@ -1,7 +1,9 @@
 import { defineStore } from 'pinia';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import type { Contact } from '@/types';
-import { addMemory, initMemoryService } from '@/services/memoryService';
+import { addMemory, initMemoryService, updateContactIndex } from '@/services/memoryService';
+import { renamePersona, deletePersona } from '@/services/personaService';
+import { renameBufferEntries, deleteBufferEntriesByContact } from '@/services/evolutionEngine';
 
 const CONTACTS_KEY = 'context-pod-contacts';
 
@@ -20,6 +22,11 @@ export const useContactStore = defineStore('contacts', () => {
   const isDbReady = ref(false);
 
   const contactCount = computed(() => contacts.value.length);
+
+  // 监听联系人变化，自动更新快速索引
+  watch(contacts, (newContacts) => {
+    updateContactIndex(newContacts);
+  }, { immediate: true, deep: true });
 
   async function initDb() {
     if (isDbReady.value) return;
@@ -50,6 +57,7 @@ export const useContactStore = defineStore('contacts', () => {
       id: crypto.randomUUID(),
       name,
       personality,
+      identity: '',
       tags,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -70,15 +78,31 @@ export const useContactStore = defineStore('contacts', () => {
   }
 
   function removeContact(id: string) {
+    const contactToRemove = contacts.value.find(c => c.id === id);
+    if (contactToRemove) {
+      console.log(`[ContactStore] Removing contact: ${contactToRemove.name}`);
+      // 同步删除风格画像
+      deletePersona(contactToRemove.name);
+      // 同步删除缓冲区数据
+      deleteBufferEntriesByContact(contactToRemove.name);
+    }
     contacts.value = contacts.value.filter((c) => c.id !== id);
     localStorage.setItem(CONTACTS_KEY, JSON.stringify(contacts.value));
   }
 
   function updateContact(id: string, updates: Partial<Contact>) {
-    const idx = contacts.value.findIndex((c) => c.id !== id);
+    const idx = contacts.value.findIndex((c) => c.id === id);
     if (idx >= 0) {
+      const oldContact = contacts.value[idx];
+      
+      // 如果名字有变化，同步更新风格画像和缓冲区
+      if (updates.name && updates.name !== oldContact.name) {
+        renamePersona(oldContact.name, updates.name);
+        renameBufferEntries(oldContact.name, updates.name);
+      }
+      
       contacts.value[idx] = {
-        ...contacts.value[idx],
+        ...oldContact,
         ...updates,
         updatedAt: Date.now(),
       };
