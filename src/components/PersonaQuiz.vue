@@ -12,7 +12,7 @@ const emit = defineEmits<{
 
 const appStore = useAppStore();
 
-type QuizStep = 'intro' | 'domains' | 'scenarios' | 'decoding' | 'result';
+type QuizStep = 'intro' | 'mbti' | 'scenarios' | 'decoding' | 'result';
 
 const currentStep = ref<QuizStep>('intro');
 const currentDomainIndex = ref(0);
@@ -28,6 +28,7 @@ const error = ref('');
 const showRadarAnimation = ref(false);
 const radarLevel = ref(0);
 const decodingMessage = ref('');
+const selectedMbti = ref('');
 
 // 新增：自身风格的缓存管理
 const selfBuffer = ref<ChatBufferEntry[]>([]);
@@ -35,6 +36,25 @@ const bufferExpanded = ref(false);
 const isUpdatingSelfPersona = ref(false);
 const isEditingSelfPersona = ref(false);
 const editingSelfPersonaData = ref<DynamicPersonaSchema | null>(null);
+
+const mbtiTypes = [
+  { value: 'INTJ', label: 'INTJ', name: '建筑师', desc: '独立思考，战略眼光' },
+  { value: 'INTP', label: 'INTP', name: '逻辑学家', desc: '好奇心强，分析能力出色' },
+  { value: 'ENTJ', label: 'ENTJ', name: '指挥官', desc: '果断决策，天生领导者' },
+  { value: 'ENTP', label: 'ENTP', name: '辩论家', desc: '聪明机智，喜欢挑战' },
+  { value: 'INFJ', label: 'INFJ', name: '提倡者', desc: '安静神秘，坚定理想主义' },
+  { value: 'INFP', label: 'INFP', name: '调停者', desc: '诗意善良，渴望理解' },
+  { value: 'ENFJ', label: 'ENFJ', name: '主人公', desc: '魅力四射，鼓舞人心' },
+  { value: 'ENFP', label: 'ENFP', name: '竞选者', desc: '热情自由，充满创造力' },
+  { value: 'ISTJ', label: 'ISTJ', name: '物流师', desc: '务实可靠，责任感强' },
+  { value: 'ISFJ', label: 'ISFJ', name: '守卫者', desc: '温暖守护，默默奉献' },
+  { value: 'ESTJ', label: 'ESTJ', name: '总经理', desc: '高效管理，秩序井然' },
+  { value: 'ESFJ', label: 'ESFJ', name: '执政官', desc: '热心助人，重视和谐' },
+  { value: 'ISTP', label: 'ISTP', name: '鉴赏家', desc: '动手能力强，冷静观察' },
+  { value: 'ISFP', label: 'ISFP', name: '探险家', desc: '艺术气息，活在当下' },
+  { value: 'ESTP', label: 'ESTP', name: '企业家', desc: '精力充沛，行动派' },
+  { value: 'ESFP', label: 'ESFP', name: '表演者', desc: '活泼热情，社交达人' },
+];
 
 const domains = [
   {
@@ -410,7 +430,7 @@ async function generateResult() {
     updateTick: Date.now(),
     powerIdentity: [
       {
-        trait: `社交能量等级：${avgEnergy}，抗压指数Lv${radar.aggression}`,
+        trait: `社交能量等级：${avgEnergy}，抗压指数Lv${radar.aggression}，MBTI: ${selectedMbti.value}`,
         confidence: 0.9,
         observationsCount: totalScenarios.value,
         decayRate: 0.02,
@@ -426,7 +446,7 @@ async function generateResult() {
     temperature: radar.temperature,
     textStyle: `综合热度${radar.temperature}/10，攻击性${radar.aggression}/10`,
     experienceEvents,
-    summary: `${mainLevel.value.label} | 亲密度:${radar.intimacy} 血缘:${radar.bloodRelation} 友谊:${radar.friends} 冲突:${radar.conflict}`,
+    summary: `${mainLevel.value.label} | MBTI: ${selectedMbti.value} | 亲密度:${radar.intimacy} 血缘:${radar.bloodRelation} 友谊:${radar.friends} 冲突:${radar.conflict}`,
     sampleCount: totalScenarios.value,
     updatedAt: Date.now(),
   };
@@ -445,6 +465,7 @@ function startRetest() {
   decodedAnalysis.value = {};
   extractedPersona.value = null;
   error.value = '';
+  selectedMbti.value = '';
 }
 
 function goBack() {
@@ -456,7 +477,22 @@ function goBack() {
   decodedAnalysis.value = {};
   extractedPersona.value = null;
   error.value = '';
+  selectedMbti.value = '';
   emit('back');
+}
+
+function selectMbti(mbti: string) {
+  selectedMbti.value = mbti;
+}
+
+function confirmMbti() {
+  if (!selectedMbti.value) {
+    error.value = '请选择你的 MBTI 人格类型';
+    return;
+  }
+  currentDomainIndex.value = 0;
+  currentScenarioIndex.value = 0;
+  currentStep.value = 'scenarios';
 }
 
 // 新增：自身风格管理功能
@@ -710,7 +746,7 @@ onMounted(() => {
         </div>
         
         <button
-          @click="currentStep = 'domains'"
+          @click="currentStep = 'mbti'"
           class="btn-primary w-full"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -968,28 +1004,44 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="currentStep === 'domains'" class="space-y-4">
+    <div v-if="currentStep === 'mbti'" class="space-y-4">
       <div class="text-center mb-4">
-        <p class="text-sm font-medium" style="color: var(--text-primary);">选择要测试的场景域</p>
-        <p class="text-xs mt-1" style="color: var(--text-tertiary);">可以按任意顺序测试，跳过不想要的场景</p>
-      </div>
-      
-      <div class="grid grid-cols-2 gap-3">
+        <div class="w-14 h-14 mx-auto mb-3 rounded-2xl flex items-center justify-center" style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(99, 102, 241, 0.06) 100%); border: 1px solid rgba(99, 102, 241, 0.15);">
+          <svg class="w-6 h-6" style="color: #6366f1;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+          </svg>
+        </div>
+        <h3 class="text-lg font-bold mb-2" style="color: var(--text-primary);">选择你的 MBTI 人格类型</h3>
+        <p class="text-sm mb-4" style="color: var(--text-tertiary);">我们将结合MBTI特征与场景回答<br/>为你生成更精准的社交画像</p>
+        
+        <div class="grid grid-cols-4 gap-2 mb-4">
+          <button
+            v-for="type in mbtiTypes"
+            :key="type.value"
+            @click="selectMbti(type.value)"
+            class="p-2 rounded-xl text-center transition-all duration-200 border"
+            :class="selectedMbti === type.value 
+              ? 'border-[var(--accent-warm)] ring-2 ring-[var(--accent-warm)] ring-opacity-20' 
+              : 'border-[var(--border-light)] hover:border-[var(--accent-warm)]'"
+            :style="selectedMbti === type.value ? 'background: rgba(139, 115, 85, 0.08);' : 'background: var(--bg-secondary);'"
+          >
+            <p class="text-sm font-bold" style="color: var(--text-primary);">{{ type.label }}</p>
+            <p class="text-[10px] mt-0.5" style="color: var(--text-tertiary);">{{ type.name }}</p>
+          </button>
+        </div>
+        
+        <div v-if="selectedMbti" class="p-3 rounded-xl mb-4" style="background: rgba(99, 102, 241, 0.06); border: 1px solid rgba(99, 102, 241, 0.1);">
+          <p class="text-sm font-medium" style="color: #6366f1;">{{ selectedMbti }} - {{ mbtiTypes.find(t => t.value === selectedMbti)?.name }}</p>
+          <p class="text-xs mt-1" style="color: var(--text-secondary);">{{ mbtiTypes.find(t => t.value === selectedMbti)?.desc }}</p>
+        </div>
+        
         <button
-          v-for="(domain, idx) in domains"
-          :key="domain.id"
-          @click="currentDomainIndex = idx; currentScenarioIndex = 0; currentStep = 'scenarios'"
-          class="p-4 rounded-2xl text-left transition-all duration-200"
-          style="background: var(--bg-secondary); border: 1px solid var(--border-light);"
+          @click="confirmMbti"
+          :disabled="!selectedMbti"
+          class="btn-primary w-full"
+          :class="!selectedMbti ? 'opacity-50 cursor-not-allowed' : ''"
         >
-          <div class="flex items-center gap-2 mb-2">
-            <svg class="w-5 h-5" style="color: var(--accent-warm);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span class="text-sm font-medium" style="color: var(--text-primary);">{{ domain.name }}</span>
-          </div>
-          <p class="text-xs mb-2" style="color: var(--text-tertiary);">{{ domain.description }}</p>
-          <p class="text-xs" style="color: var(--text-tertiary);">{{ domain.scenarios.length }}道题</p>
+          确认并继续
         </button>
       </div>
       
@@ -1004,7 +1056,7 @@ onMounted(() => {
 
     <div v-if="currentStep === 'scenarios'" class="space-y-4">
       <div class="flex items-center gap-3">
-        <button @click="currentStep = 'domains'" class="icon-btn">
+        <button @click="currentStep = 'mbti'" class="icon-btn">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 19l-7-7 7-7" />
           </svg>

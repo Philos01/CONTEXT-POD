@@ -1,0 +1,20 @@
+{
+    "app": {
+        "windows": [
+            {
+                "label": "main",
+                "title": "伴聊悬浮舱",
+                "width": 400,
+                "height": 600,
+                "minWidth": 320,
+                "minHeight": 400,
+                "decorations": true,
+                "transparent": false,
+                "alwaysOnTop": false,
+                "resizable": true,
+                "visible": true,
+                "center": true
+            }
+        ]
+    }
+}
