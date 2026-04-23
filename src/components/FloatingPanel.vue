@@ -289,6 +289,9 @@ function saveCustomReply(_modelReply: string) {
     const combinedText = `${rawContext.value}\n我: ${customReplyText.value}`;
     saveUserReply(combinedText, contactName, customReplyText.value);
     
+    // 保存到赛博捏脸对话缓存
+    pushToBuffer('自我', customReplyText.value, 'user');
+    
     alertService.success('回复已保存！当积累足够数据后，系统会在闲时自动学习您的风格。');
     
     customReplyText.value = '';
