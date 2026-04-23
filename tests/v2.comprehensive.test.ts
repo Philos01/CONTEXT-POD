@@ -1,33 +1,33 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 
-describe('Type Definitions', () =&gt; {
-  it('should import without errors', () =&gt; {
-    expect(() =&gt; {
+describe('Type Definitions', () => {
+  it('should import without errors', () => {
+    expect(() => {
       require('@/types');
     }).not.toThrow();
   });
 
-  it('should have 5 conversation phases', () =&gt; {
+  it('should have 5 conversation phases', () => {
     const phases: any = ['probing', 'pressuring', 'conflict', 'cooling', 'repairing'];
     expect(phases).toHaveLength(5);
   });
 
-  it('should have 5 tactical goals', () =&gt; {
+  it('should have 5 tactical goals', () => {
     const goals: any = ['advance', 'stabilize', 'delay', 'counterattack', 'disengage'];
     expect(goals).toHaveLength(5);
   });
 });
 
-describe('Conversation State Engine', () =&gt; {
-  it('should export all required functions', async () =&gt; {
+describe('Conversation State Engine', () => {
+  it('should export all required functions', async () => {
     const module = await import('@/services/conversationStateEngine');
     expect(module.classifyConversationPhase).toBeDefined();
     expect(module.getPhaseLabel).toBeDefined();
     expect(module.getPhaseStrategyHint).toBeDefined();
   });
 
-  it('getPhaseLabel should return correct Chinese labels', async () =&gt; {
+  it('getPhaseLabel should return correct Chinese labels', async () => {
     const { getPhaseLabel } = await import('@/services/conversationStateEngine');
     expect(getPhaseLabel('probing')).toBe('1-试探期');
     expect(getPhaseLabel('pressuring')).toBe('2-施压期');
@@ -36,7 +36,7 @@ describe('Conversation State Engine', () =&gt; {
     expect(getPhaseLabel('repairing')).toBe('5-关系修复期');
   });
 
-  it('getPhaseStrategyHint should return relevant hints', async () =&gt; {
+  it('getPhaseStrategyHint should return relevant hints', async () => {
     const { getPhaseStrategyHint } = await import('@/services/conversationStateEngine');
     expect(getPhaseStrategyHint('probing')).toContain('试探');
     expect(getPhaseStrategyHint('pressuring')).toContain('施压');
@@ -46,12 +46,12 @@ describe('Conversation State Engine', () =&gt; {
   });
 });
 
-describe('Feedback Evaluator', () =&gt; {
-  beforeEach(() =&gt; {
+describe('Feedback Evaluator', () => {
+  beforeEach(() => {
     localStorage.clear();
   });
 
-  it('should export all required functions', async () =&gt; {
+  it('should export all required functions', async () => {
     const module = await import('@/services/feedbackEvaluator');
     expect(module.loadEvaluations).toBeDefined();
     expect(module.saveEvaluations).toBeDefined();
@@ -59,12 +59,12 @@ describe('Feedback Evaluator', () =&gt; {
     expect(module.buildHistoricalEvaluationsSummary).toBeDefined();
   });
 
-  it('empty storage should return empty array', async () =&gt; {
+  it('empty storage should return empty array', async () => {
     const { loadEvaluations } = await import('@/services/feedbackEvaluator');
     expect(loadEvaluations()).toEqual([]);
   });
 
-  it('should save and load evaluations', async () =&gt; {
+  it('should save and load evaluations', async () => {
     const { loadEvaluations, saveEvaluations } = await import('@/services/feedbackEvaluator');
     const testEval: any = {
       result: 'success',
@@ -82,7 +82,7 @@ describe('Feedback Evaluator', () =&gt; {
     expect(loaded[0].contactName).toBe('TestContact');
   });
 
-  it('should filter evaluations by contact', async () =&gt; {
+  it('should filter evaluations by contact', async () => {
     const { getEvaluationsByContact, saveEvaluations } = await import('@/services/feedbackEvaluator');
     saveEvaluations([
       { result: 'success', reason: 't1', adjustment: 't1', timestamp: Date.now(), contactName: 'A', strategyLabel: 'A', strategyContent: 't1', opponentResponse: 't1' },
@@ -94,7 +94,7 @@ describe('Feedback Evaluator', () =&gt; {
     expect(getEvaluationsByContact('C').length).toBe(0);
   });
 
-  it('should build feedback section', async () =&gt; {
+  it('should build feedback section', async () => {
     const { buildFeedbackSection, saveEvaluations } = await import('@/services/feedbackEvaluator');
     saveEvaluations([
       { result: 'success', reason: 'good', adjustment: 'keep', timestamp: Date.now(), contactName: 'Test', strategyLabel: 'A', strategyContent: 't', opponentResponse: 't' }
@@ -105,31 +105,31 @@ describe('Feedback Evaluator', () =&gt; {
     expect(section).toContain('✅');
   });
 
-  it('should return empty for no history', async () =&gt; {
+  it('should return empty for no history', async () => {
     const { buildFeedbackSection } = await import('@/services/feedbackEvaluator');
     expect(buildFeedbackSection('NoHistory')).toBe('');
   });
 });
 
-describe('Prompt Service', () =&gt; {
-  beforeEach(() =&gt; {
+describe('Prompt Service', () => {
+  beforeEach(() => {
     localStorage.clear();
   });
 
-  it('should export all required functions', async () =&gt; {
+  it('should export all required functions', async () => {
     const module = await import('@/services/promptService');
     expect(module.loadPrompts).toBeDefined();
     expect(module.getPrompt).toBeDefined();
     expect(module.formatPrompt).toBeDefined();
   });
 
-  it('first load should return V2 default templates', async () =&gt; {
+  it('first load should return V2 default templates', async () => {
     const { loadPrompts } = await import('@/services/promptService');
     const prompts = loadPrompts();
     expect(prompts.length).toBeGreaterThanOrEqual(5);
   });
 
-  it('should have all required V2 prompts', async () =&gt; {
+  it('should have all required V2 prompts', async () => {
     const { getPrompt } = await import('@/services/promptService');
     expect(getPrompt('system-main')).not.toBeNull();
     expect(getPrompt('style-extraction')).not.toBeNull();
@@ -138,7 +138,7 @@ describe('Prompt Service', () =&gt; {
     expect(getPrompt('strategy-evaluation')).not.toBeNull();
   });
 
-  it('system-main should contain V2 features', async () =&gt; {
+  it('system-main should contain V2 features', async () => {
     const { getPrompt } = await import('@/services/promptService');
     const prompt = getPrompt('system-main');
     expect(prompt?.content).toContain('tacticalGoal');
@@ -146,7 +146,7 @@ describe('Prompt Service', () =&gt; {
     expect(prompt?.content).toContain('expectedReaction');
   });
 
-  it('style-extraction should contain weighted persona', async () =&gt; {
+  it('style-extraction should contain weighted persona', async () => {
     const { getPrompt } = await import('@/services/promptService');
     const prompt = getPrompt('style-extraction');
     expect(prompt?.content).toContain('powerIdentity');
@@ -162,7 +162,7 @@ describe('Prompt Service', () =&gt; {
     expect(prompt?.content).toContain('feedbackSection');
   });
 
-  it('should format variable replacements', async () =&gt; {
+  it('should format variable replacements', async () => {
     const { formatPrompt } = await import('@/services/promptService');
     const testPrompt: any = {
       content: 'Hello {name}, {thing}',
@@ -173,7 +173,7 @@ describe('Prompt Service', () =&gt; {
     expect(result).toBe('Hello User, World');
   });
 
-  it('should update and reset prompts', async () =&gt; {
+  it('should update and reset prompts', async () => {
     const { updatePrompt, resetPromptToDefault, getPrompt } = await import('@/services/promptService');
     updatePrompt('system-main', { name: 'Modified' });
     expect(getPrompt('system-main')?.name).toBe('Modified');
@@ -191,28 +191,28 @@ describe('LLM Service', () => {
     expect(module.FALLBACK_STRATEGIES).toBeDefined();
   });
 
-  it('normalizeRiskLevel - should handle standard values', async () =&gt; {
+  it('normalizeRiskLevel - should handle standard values', async () => {
     const { normalizeRiskLevel } = await import('@/services/llmService');
     expect(normalizeRiskLevel('low')).toBe('low');
     expect(normalizeRiskLevel('medium')).toBe('medium');
     expect(normalizeRiskLevel('high')).toBe('high');
   });
 
-  it('normalizeRiskLevel - should handle Chinese values', async () =&gt; {
+  it('normalizeRiskLevel - should handle Chinese values', async () => {
     const { normalizeRiskLevel } = await import('@/services/llmService');
     expect(normalizeRiskLevel('低')).toBe('low');
     expect(normalizeRiskLevel('中')).toBe('medium');
     expect(normalizeRiskLevel('高')).toBe('high');
   });
 
-  it('normalizeRiskLevel - should default to medium', async () =&gt; {
+  it('normalizeRiskLevel - should default to medium', async () => {
     const { normalizeRiskLevel } = await import('@/services/llmService');
     expect(normalizeRiskLevel('unknown')).toBe('medium');
     expect(normalizeRiskLevel(null)).toBe('medium');
     expect(normalizeRiskLevel(undefined)).toBe('medium');
   });
 
-  it('ensureV2Strategies - should fill missing fields', async () =&gt; {
+  it('ensureV2Strategies - should fill missing fields', async () => {
     const { ensureV2Strategies } = await import('@/services/llmService');
     const result = ensureV2Strategies([{ label: 'A', content: 't' }]);
     expect(result[0].tacticalGoal).toBeDefined();
@@ -220,10 +220,10 @@ describe('LLM Service', () => {
     expect(result[0].expectedReaction).toBeDefined();
   });
 
-  it('FALLBACK_STRATEGIES should have complete V2 structure', async () =&gt; {
+  it('FALLBACK_STRATEGIES should have complete V2 structure', async () => {
     const { FALLBACK_STRATEGIES } = await import('@/services/llmService');
     expect(FALLBACK_STRATEGIES).toHaveLength(3);
-    FALLBACK_STRATEGIES.forEach((s: any) =&gt; {
+    FALLBACK_STRATEGIES.forEach((s: any) => {
       expect(s.tacticalGoal).toBeDefined();
       expect(s.riskLevel).toBeDefined();
       expect(s.expectedReaction).toBeDefined();
@@ -231,12 +231,12 @@ describe('LLM Service', () => {
   });
 });
 
-describe('Persona Service', () =&gt; {
-  beforeEach(() =&gt; {
+describe('Persona Service', () => {
+  beforeEach(() => {
     localStorage.clear();
   });
 
-  it('should export all required functions', async () =&gt; {
+  it('should export all required functions', async () => {
     const module = await import('@/services/personaService');
     expect(module.getPersona).toBeDefined();
     expect(module.savePersona).toBeDefined();
@@ -244,7 +244,7 @@ describe('Persona Service', () =&gt; {
     expect(module.saveDynamicPersona).toBeDefined();
   });
 
-  it('should save and load StylePersona', async () =&gt; {
+  it('should save and load StylePersona', async () => {
     const { getPersona, savePersona } = await import('@/services/personaService');
     const persona: any = {
       sentenceStyle: 'short',
@@ -258,7 +258,7 @@ describe('Persona Service', () =&gt; {
     expect(getPersona('Test')?.summary).toBe('simple');
   });
 
-  it('should save and load DynamicPersona', async () =&gt; {
+  it('should save and load DynamicPersona', async () => {
     const { getDynamicPersona, saveDynamicPersona } = await import('@/services/personaService');
     const persona: any = {
       targetId: 'Test',
@@ -275,7 +275,7 @@ describe('Persona Service', () =&gt; {
     expect(getDynamicPersona('Test')?.summary).toBe('test');
   });
 
-  it('formatDynamicPersonaForPrompt should work', async () =&gt; {
+  it('formatDynamicPersonaForPrompt should work', async () => {
     const { formatDynamicPersonaForPrompt } = await import('@/services/personaService');
     const persona: any = {
       targetId: 't', updateTick: Date.now(), powerIdentity: [], psychologicalNeeds: [],
@@ -286,38 +286,38 @@ describe('Persona Service', () =&gt; {
   });
 });
 
-describe('V2 Features Integration', () =&gt; {
-  it('should have tacticalGoal in prompt', async () =&gt; {
+describe('V2 Features Integration', () => {
+  it('should have tacticalGoal in prompt', async () => {
     const { getPrompt } = await import('@/services/promptService');
     expect(getPrompt('system-main')?.content).toContain('tacticalGoal');
   });
 
-  it('should have riskLevel in prompt', async () =&gt; {
+  it('should have riskLevel in prompt', async () => {
     const { getPrompt } = await import('@/services/promptService');
     expect(getPrompt('system-main')?.content).toContain('riskLevel');
   });
 
-  it('should have expectedReaction in prompt', async () =&gt; {
+  it('should have expectedReaction in prompt', async () => {
     const { getPrompt } = await import('@/services/promptService');
     expect(getPrompt('system-main')?.content).toContain('expectedReaction');
   });
 
-  it('should have conversationPhase in prompt', async () =&gt; {
+  it('should have conversationPhase in prompt', async () => {
     const { getPrompt } = await import('@/services/promptService');
     expect(getPrompt('reply-generation')?.content).toContain('conversationPhase');
   });
 
-  it('should have feedbackSection in prompt', async () =&gt; {
+  it('should have feedbackSection in prompt', async () => {
     const { getPrompt } = await import('@/services/promptService');
     expect(getPrompt('reply-generation')?.content).toContain('feedbackSection');
   });
 
-  it('should have powerIdentity in style extraction', async () =&gt; {
+  it('should have powerIdentity in style extraction', async () => {
     const { getPrompt } = await import('@/services/promptService');
     expect(getPrompt('style-extraction')?.content).toContain('powerIdentity');
   });
 
-  it('should have absolute prohibition rules', async () =&gt; {
+  it('should have absolute prohibition rules', async () => {
     const { getPrompt } = await import('@/services/promptService');
     expect(getPrompt('system-main')?.content).toContain('绝对禁令');
   });
@@ -327,39 +327,39 @@ describe('V2 Features Integration', () =&gt; {
     expect(getPrompt('system-main')?.content).toContain('真实博弈目的');
   });
 
-  it('should allow human imperfection', async () =&gt; {
+  it('should allow human imperfection', async () => {
     const { getPrompt } = await import('@/services/promptService');
     expect(getPrompt('system-main')?.content).toContain('允许轻微不完美');
   });
 });
 
-describe('Boundary Conditions', () =&gt; {
-  beforeEach(() =&gt; {
+describe('Boundary Conditions', () => {
+  beforeEach(() => {
     localStorage.clear();
   });
 
-  it('should handle empty inputs', async () =&gt; {
+  it('should handle empty inputs', async () => {
     const { loadPrompts } = await import('@/services/promptService');
     const { loadPersonas, loadDynamicPersonas } = await import('@/services/personaService');
     const { loadEvaluations } = await import('@/services/feedbackEvaluator');
-    expect(() =&gt; loadPrompts()).not.toThrow();
-    expect(() =&gt; loadPersonas()).not.toThrow();
-    expect(() =&gt; loadDynamicPersonas()).not.toThrow();
-    expect(() =&gt; loadEvaluations()).not.toThrow();
+    expect(() => loadPrompts()).not.toThrow();
+    expect(() => loadPersonas()).not.toThrow();
+    expect(() => loadDynamicPersonas()).not.toThrow();
+    expect(() => loadEvaluations()).not.toThrow();
   });
 
-  it('should have fallback strategies', async () =&gt; {
+  it('should have fallback strategies', async () => {
     const { FALLBACK_STRATEGIES } = await import('@/services/llmService');
     expect(FALLBACK_STRATEGIES).toHaveLength(3);
   });
 });
 
-describe('Backward Compatibility', () =&gt; {
-  beforeEach(() =&gt; {
+describe('Backward Compatibility', () => {
+  beforeEach(() => {
     localStorage.clear();
   });
 
-  it('should still support StylePersona', async () =&gt; {
+  it('should still support StylePersona', async () => {
     const { getPersona, savePersona } = await import('@/services/personaService');
     const persona: any = {
       sentenceStyle: 't', catchphrases: ['a'], emotionLevel: 't', vocabFeatures: 't',
@@ -369,7 +369,7 @@ describe('Backward Compatibility', () =&gt; {
     expect(getPersona('Test')).not.toBeNull();
   });
 
-  it('should auto-upgrade old format prompts', async () =&gt; {
+  it('should auto-upgrade old format prompts', async () => {
     const { loadPrompts, savePrompts } = await import('@/services/promptService');
     const oldPrompt: any = {
       id: 'system-main', name: 'old', description: 'old', category: 'system',

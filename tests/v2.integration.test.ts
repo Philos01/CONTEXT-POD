@@ -1,14 +1,14 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-describe('类型定义验证', () =&gt; {
-  it('类型定义应该正常导入', () =&gt; {
-    expect(() =&gt; {
+describe('类型定义验证', () => {
+  it('类型定义应该正常导入', () => {
+    expect(() => {
       import('@/types');
     }).not.toThrow();
   });
 
-  it('ConversationPhase 应该有5种值', () =&gt; {
+  it('ConversationPhase 应该有5种值', () => {
     // 实际验证类型兼容性
     const phase1: 'probing' = 'probing';
     const phase2: 'pressuring' = 'pressuring';
@@ -18,7 +18,7 @@ describe('类型定义验证', () =&gt; {
     expect([phase1, phase2, phase3, phase4, phase5]).toHaveLength(5);
   });
 
-  it('TacticalGoal 应该有5种值', () =&gt; {
+  it('TacticalGoal 应该有5种值', () => {
     const goal1: 'advance' = 'advance';
     const goal2: 'stabilize' = 'stabilize';
     const goal3: 'delay' = 'delay';
@@ -28,15 +28,15 @@ describe('类型定义验证', () =&gt; {
   });
 });
 
-describe('对话状态机 (conversationStateEngine)', () =&gt; {
-  it('应该能正常导入', async () =&gt; {
+describe('对话状态机 (conversationStateEngine)', () => {
+  it('应该能正常导入', async () => {
     const module = await import('@/services/conversationStateEngine');
     expect(module.classifyConversationPhase).toBeDefined();
     expect(module.getPhaseLabel).toBeDefined();
     expect(module.getPhaseStrategyHint).toBeDefined();
   });
 
-  it('getPhaseLabel 应该返回正确的标签', async () =&gt; {
+  it('getPhaseLabel 应该返回正确的标签', async () => {
     const { getPhaseLabel } = await import('@/services/conversationStateEngine');
     expect(getPhaseLabel('probing')).toBe('1-试探期');
     expect(getPhaseLabel('pressuring')).toBe('2-施压期');
@@ -45,7 +45,7 @@ describe('对话状态机 (conversationStateEngine)', () =&gt; {
     expect(getPhaseLabel('repairing')).toBe('5-关系修复期');
   });
 
-  it('getPhaseStrategyHint 应该返回正确的提示', async () =&gt; {
+  it('getPhaseStrategyHint 应该返回正确的提示', async () => {
     const { getPhaseStrategyHint } = await import('@/services/conversationStateEngine');
     expect(getPhaseStrategyHint('probing')).toContain('试探');
     expect(getPhaseStrategyHint('pressuring')).toContain('施压');
@@ -55,12 +55,12 @@ describe('对话状态机 (conversationStateEngine)', () =&gt; {
   });
 });
 
-describe('反馈评估器 (feedbackEvaluator)', () =&gt; {
-  beforeEach(() =&gt; {
+describe('反馈评估器 (feedbackEvaluator)', () => {
+  beforeEach(() => {
     localStorage.clear();
   });
 
-  it('应该能正常导入', async () =&gt; {
+  it('应该能正常导入', async () => {
     const module = await import('@/services/feedbackEvaluator');
     expect(module.loadEvaluations).toBeDefined();
     expect(module.saveEvaluations).toBeDefined();
@@ -68,13 +68,13 @@ describe('反馈评估器 (feedbackEvaluator)', () =&gt; {
     expect(module.buildHistoricalEvaluationsSummary).toBeDefined();
   });
 
-  it('空存储应该返回空数组', async () =&gt; {
+  it('空存储应该返回空数组', async () => {
     const { loadEvaluations } = await import('@/services/feedbackEvaluator');
     const evals = loadEvaluations();
     expect(evals).toEqual([]);
   });
 
-  it('应该能保存和加载评估记录', async () =&gt; {
+  it('应该能保存和加载评估记录', async () => {
     const { loadEvaluations, saveEvaluations } = await import('@/services/feedbackEvaluator');
     const testEval: any = {
       result: 'success',
@@ -94,7 +94,7 @@ describe('反馈评估器 (feedbackEvaluator)', () =&gt; {
     expect(loaded[0].result).toBe('success');
   });
 
-  it('应该能按联系人筛选评估记录', async () =&gt; {
+  it('应该能按联系人筛选评估记录', async () => {
     const { getEvaluationsByContact, saveEvaluations } = await import('@/services/feedbackEvaluator');
     saveEvaluations([
       { result: 'success', reason: 't1', adjustment: 't1', timestamp: Date.now(), contactName: '张三', strategyLabel: 'A', strategyContent: 't1', opponentResponse: 't1' },
@@ -117,12 +117,12 @@ describe('反馈评估器 (feedbackEvaluator)', () =&gt; {
     expect(section).toContain('✅');
   });
 
-  it('无历史记录时应该返回空字符串', async () =&gt; {
+  it('无历史记录时应该返回空字符串', async () => {
     const { buildFeedbackSection } = await import('@/services/feedbackEvaluator');
     expect(buildFeedbackSection('无记录')).toBe('');
   });
 
-  it('应该能构建历史评估摘要', async () =&gt; {
+  it('应该能构建历史评估摘要', async () => {
     const { buildHistoricalEvaluationsSummary, saveEvaluations } = await import('@/services/feedbackEvaluator');
     saveEvaluations([
       { result: 'success', reason: 't', adjustment: 't', timestamp: Date.now(), contactName: '张三', strategyLabel: 'A', strategyContent: 't', opponentResponse: 't' },
@@ -137,25 +137,25 @@ describe('反馈评估器 (feedbackEvaluator)', () =&gt; {
   });
 });
 
-describe('提示词服务 (promptService)', () =&gt; {
-  beforeEach(() =&gt; {
+describe('提示词服务 (promptService)', () => {
+  beforeEach(() => {
     localStorage.clear();
   });
 
-  it('应该能正常导入', async () =&gt; {
+  it('应该能正常导入', async () => {
     const module = await import('@/services/promptService');
     expect(module.loadPrompts).toBeDefined();
     expect(module.getPrompt).toBeDefined();
     expect(module.formatPrompt).toBeDefined();
   });
 
-  it('首次加载应该返回默认V2模板', async () =&gt; {
+  it('首次加载应该返回默认V2模板', async () => {
     const { loadPrompts } = await import('@/services/promptService');
     const prompts = loadPrompts();
     expect(prompts.length).toBeGreaterThanOrEqual(5);
   });
 
-  it('应该包含V2的所有必要模板', async () =&gt; {
+  it('应该包含V2的所有必要模板', async () => {
     const { getPrompt } = await import('@/services/promptService');
     expect(getPrompt('system-main')).not.toBeNull();
     expect(getPrompt('style-extraction')).not.toBeNull();
@@ -164,7 +164,7 @@ describe('提示词服务 (promptService)', () =&gt; {
     expect(getPrompt('strategy-evaluation')).not.toBeNull();
   });
 
-  it('system-main应该包含V2特性', async () =&gt; {
+  it('system-main应该包含V2特性', async () => {
     const { getPrompt } = await import('@/services/promptService');
     const prompt = getPrompt('system-main');
     expect(prompt?.content).toContain('绝对禁令');
@@ -174,7 +174,7 @@ describe('提示词服务 (promptService)', () =&gt; {
     expect(prompt?.content).toContain('expectedReaction');
   });
 
-  it('style-extraction应该包含V2加权画像', async () =&gt; {
+  it('style-extraction应该包含V2加权画像', async () => {
     const { getPrompt } = await import('@/services/promptService');
     const prompt = getPrompt('style-extraction');
     expect(prompt?.content).toContain('powerIdentity');
@@ -184,7 +184,7 @@ describe('提示词服务 (promptService)', () =&gt; {
     expect(prompt?.content).toContain('taboos');
   });
 
-  it('reply-generation应该包含V2所有字段', async () =&gt; {
+  it('reply-generation应该包含V2所有字段', async () => {
     const { getPrompt } = await import('@/services/promptService');
     const prompt = getPrompt('reply-generation');
     expect(prompt?.content).toContain('conversationPhase');
@@ -193,7 +193,7 @@ describe('提示词服务 (promptService)', () =&gt; {
     expect(prompt?.content).toContain('镜像规整律');
   });
 
-  it('应该能正确格式化变量替换', async () =&gt; {
+  it('应该能正确格式化变量替换', async () => {
     const { formatPrompt } = await import('@/services/promptService');
     const testPrompt: any = {
       content: 'Hello {name}, this is {thing}',
@@ -204,7 +204,7 @@ describe('提示词服务 (promptService)', () =&gt; {
     expect(result).toBe('Hello 张三, this is 测试');
   });
 
-  it('应该能更新提示词', async () =&gt; {
+  it('应该能更新提示词', async () => {
     const { updatePrompt, getPrompt } = await import('@/services/promptService');
     updatePrompt('system-main', { name: '测试修改' });
     expect(getPrompt('system-main')?.name).toBe('测试修改');
@@ -219,8 +219,8 @@ describe('提示词服务 (promptService)', () =&gt; {
   });
 });
 
-describe('LLM服务 (llmService)', () =&gt; {
-  it('应该能正常导入', async () =&gt; {
+describe('LLM服务 (llmService)', () => {
+  it('应该能正常导入', async () => {
     const module = await import('@/services/llmService');
     expect(module.generateStrategies).toBeDefined();
     expect(module.normalizeRiskLevel).toBeDefined();
@@ -228,21 +228,21 @@ describe('LLM服务 (llmService)', () =&gt; {
     expect(module.FALLBACK_STRATEGIES).toBeDefined();
   });
 
-  it('normalizeRiskLevel - 标准值应该原样返回', async () =&gt; {
+  it('normalizeRiskLevel - 标准值应该原样返回', async () => {
     const { normalizeRiskLevel } = await import('@/services/llmService');
     expect(normalizeRiskLevel('low')).toBe('low');
     expect(normalizeRiskLevel('medium')).toBe('medium');
     expect(normalizeRiskLevel('high')).toBe('high');
   });
 
-  it('normalizeRiskLevel - 中文应该正确转换', async () =&gt; {
+  it('normalizeRiskLevel - 中文应该正确转换', async () => {
     const { normalizeRiskLevel } = await import('@/services/llmService');
     expect(normalizeRiskLevel('低')).toBe('low');
     expect(normalizeRiskLevel('中')).toBe('medium');
     expect(normalizeRiskLevel('高')).toBe('high');
   });
 
-  it('normalizeRiskLevel - 未知值应该返回medium', async () =&gt; {
+  it('normalizeRiskLevel - 未知值应该返回medium', async () => {
     const { normalizeRiskLevel } = await import('@/services/llmService');
     expect(normalizeRiskLevel('unknown')).toBe('medium');
     expect(normalizeRiskLevel(null)).toBe('medium');
@@ -250,7 +250,7 @@ describe('LLM服务 (llmService)', () =&gt; {
     expect(normalizeRiskLevel(123)).toBe('medium');
   });
 
-  it('ensureV2Strategies - 缺失字段应该被填充默认值', async () =&gt; {
+  it('ensureV2Strategies - 缺失字段应该被填充默认值', async () => {
     const { ensureV2Strategies } = await import('@/services/llmService');
     const input = [{ label: 'A', content: 'test' }];
     const result = ensureV2Strategies(input);
@@ -259,10 +259,10 @@ describe('LLM服务 (llmService)', () =&gt; {
     expect(result[0].expectedReaction).toBeDefined();
   });
 
-  it('FALLBACK_STRATEGIES - 应该有完整V2结构', async () =&gt; {
+  it('FALLBACK_STRATEGIES - 应该有完整V2结构', async () => {
     const { FALLBACK_STRATEGIES } = await import('@/services/llmService');
     expect(FALLBACK_STRATEGIES).toHaveLength(3);
-    FALLBACK_STRATEGIES.forEach((s: any) =&gt; {
+    FALLBACK_STRATEGIES.forEach((s: any) => {
       expect(s.tacticalGoal).not.toBe('');
       expect(s.riskLevel).toBeDefined();
       expect(s.expectedReaction).not.toBe('');
@@ -270,12 +270,12 @@ describe('LLM服务 (llmService)', () =&gt; {
   });
 });
 
-describe('加权画像服务 (personaService)', () =&gt; {
-  beforeEach(() =&gt; {
+describe('加权画像服务 (personaService)', () => {
+  beforeEach(() => {
     localStorage.clear();
   });
 
-  it('应该能正常导入', async () =&gt; {
+  it('应该能正常导入', async () => {
     const module = await import('@/services/personaService');
     expect(module.getPersona).toBeDefined();
     expect(module.savePersona).toBeDefined();
@@ -286,13 +286,13 @@ describe('加权画像服务 (personaService)', () =&gt; {
     expect(module.applyDecay).toBeDefined();
   });
 
-  it('空存储应该返回空对象', async () =&gt; {
+  it('空存储应该返回空对象', async () => {
     const { loadPersonas, loadDynamicPersonas } = await import('@/services/personaService');
     expect(Object.keys(loadPersonas())).toEqual([]);
     expect(Object.keys(loadDynamicPersonas())).toEqual([]);
   });
 
-  it('应该能保存和获取StylePersona', async () =&gt; {
+  it('应该能保存和获取StylePersona', async () => {
     const { getPersona, savePersona } = await import('@/services/personaService');
     const persona: any = {
       sentenceStyle: '简短',
@@ -355,12 +355,12 @@ describe('加权画像服务 (personaService)', () =&gt; {
   });
 });
 
-describe('进化引擎 (evolutionEngine)', () =&gt; {
-  beforeEach(() =&gt; {
+describe('进化引擎 (evolutionEngine)', () => {
+  beforeEach(() => {
     localStorage.clear();
   });
 
-  it('应该能正常导入', async () =&gt; {
+  it('应该能正常导入', async () => {
     const module = await import('@/services/evolutionEngine');
     expect(module.EVOLUTION_THRESHOLD).toBeDefined();
     expect(module.getBufferByContact).toBeDefined();
@@ -369,23 +369,23 @@ describe('进化引擎 (evolutionEngine)', () =&gt; {
     expect(module.triggerPersonaUpdate).toBeDefined();
   });
 
-  it('EVOLUTION_THRESHOLD 应该是50', async () =&gt; {
+  it('EVOLUTION_THRESHOLD 应该是50', async () => {
     const { EVOLUTION_THRESHOLD } = await import('@/services/evolutionEngine');
     expect(EVOLUTION_THRESHOLD).toBe(50);
   });
 
-  it('空联系人缓冲区应该返回空数组', async () =&gt; {
+  it('空联系人缓冲区应该返回空数组', async () => {
     const { getBufferByContact } = await import('@/services/evolutionEngine');
     expect(getBufferByContact('不存在')).toEqual([]);
   });
 });
 
 describe('Agent工作流 (agentWorkflow)', () => {
-  beforeEach(() =&gt; {
+  beforeEach(() => {
     localStorage.clear();
   });
 
-  it('应该能正常导入', async () =&gt; {
+  it('应该能正常导入', async () => {
     const module = await import('@/services/agentWorkflow');
     expect(module.identifyContact).toBeDefined();
     expect(module.identifyContactAsync).toBeDefined();
@@ -393,15 +393,15 @@ describe('Agent工作流 (agentWorkflow)', () => {
     expect(module.runWorkflowStream).toBeDefined();
   });
 
-  it('clearHistory 应该重置历史', async () =&gt; {
+  it('clearHistory 应该重置历史', async () => {
     const { clearHistory, getHistory } = await import('@/services/agentWorkflow');
     clearHistory();
     expect(getHistory()).toEqual([]);
   });
 });
 
-describe('V2特性完整性验证', () =&gt; {
-  it('应该包含所有必要的V2提示词字段', async () =&gt; {
+describe('V2特性完整性验证', () => {
+  it('应该包含所有必要的V2提示词字段', async () => {
     const { getPrompt } = await import('@/services/promptService');
     const systemPrompt = getPrompt('system-main');
     const replyPrompt = getPrompt('reply-generation');
@@ -443,22 +443,22 @@ describe('V2特性完整性验证', () =&gt; {
   });
 });
 
-describe('边界条件和异常处理', () =&gt; {
-  beforeEach(() =&gt; {
+describe('边界条件和异常处理', () => {
+  beforeEach(() => {
     localStorage.clear();
   });
 
-  it('空输入应该被安全处理', async () =&gt; {
+  it('空输入应该被安全处理', async () => {
     const { loadPrompts } = await import('@/services/promptService');
     const { loadPersonas, loadDynamicPersonas } = await import('@/services/personaService');
     const { loadEvaluations } = await import('@/services/feedbackEvaluator');
-    expect(() =&gt; loadPrompts()).not.toThrow();
-    expect(() =&gt; loadPersonas()).not.toThrow();
-    expect(() =&gt; loadDynamicPersonas()).not.toThrow();
-    expect(() =&gt; loadEvaluations()).not.toThrow();
+    expect(() => loadPrompts()).not.toThrow();
+    expect(() => loadPersonas()).not.toThrow();
+    expect(() => loadDynamicPersonas()).not.toThrow();
+    expect(() => loadEvaluations()).not.toThrow();
   });
 
-  it('JSON解析失败应该有fallback', async () =&gt; {
+  it('JSON解析失败应该有fallback', async () => {
     const { FALLBACK_STRATEGIES } = await import('@/services/llmService');
     expect(FALLBACK_STRATEGIES).toHaveLength(3);
   });
@@ -471,11 +471,11 @@ describe('边界条件和异常处理', () =&gt; {
 });
 
 describe('向后兼容性', () =>&gt; {
-  beforeEach(() =&gt; {
+  beforeEach(() => {
     localStorage.clear();
   });
 
-  it('StylePersona应该仍被完全支持', async () =&gt; {
+  it('StylePersona应该仍被完全支持', async () => {
     const { getPersona, savePersona, formatPersonaForPrompt } = await import('@/services/personaService');
     const persona: any = {
       sentenceStyle: 't', catchphrases: ['a'], emotionLevel: 't', vocabFeatures: 't', punctuationHabits: 't', summary: 't'

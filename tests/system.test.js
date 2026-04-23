@@ -35,16 +35,16 @@ type TestSuite = {
 class TestRunner {
   private suites: TestSuite[] = [];
   private currentSuite: TestSuite | null = null;
-  private mockStorage = new Map&lt;string, string&gt;();
+  private mockStorage = new Map<string, string>();
 
   constructor() {
     // Mock localStorage
     global.localStorage = {
-      getItem: (key: string) =&gt; this.mockStorage.get(key) || null,
-      setItem: (key: string, value: string) =&gt; this.mockStorage.set(key, value),
-      removeItem: (key: string) =&gt; this.mockStorage.delete(key),
-      clear: () =&gt; this.mockStorage.clear(),
-      key: () =&gt; null,
+      getItem: (key: string) => this.mockStorage.get(key) || null,
+      setItem: (key: string, value: string) => this.mockStorage.set(key, value),
+      removeItem: (key: string) => this.mockStorage.delete(key),
+      clear: () => this.mockStorage.clear(),
+      key: () => null,
       length: 0,
     };
   }
@@ -53,14 +53,14 @@ class TestRunner {
     this.mockStorage.clear();
   }
 
-  suite(name: string, fn: () =&gt; void) {
+  suite(name: string, fn: () => void) {
     this.currentSuite = { name, tests: [] };
     this.suites.push(this.currentSuite);
     fn();
     this.currentSuite = null;
   }
 
-  test(name: string, fn: () =&gt; boolean | void | Promise&lt;boolean | void&gt;) {
+  test(name: string, fn: () => boolean | void | Promise<boolean | void>) {
     if (!this.currentSuite) return;
 
     try {
@@ -111,8 +111,8 @@ class TestRunner {
     let totalFailed = 0;
 
     for (const suite of this.suites) {
-      const passed = suite.tests.filter(t =&gt; t.passed).length;
-      const failed = suite.tests.filter(t =&gt; !t.passed).length;
+      const passed = suite.tests.filter(t => t.passed).length;
+      const failed = suite.tests.filter(t => !t.passed).length;
       totalPassed += passed;
       totalFailed += failed;
 
@@ -149,19 +149,19 @@ const runner = new TestRunner();
 // ============================================
 // 测试 1: 类型定义验证
 // ============================================
-runner.suite('类型定义验证', () =&gt; {
-  runner.test('ConversationPhase 枚举值验证', () =&gt; {
+runner.suite('类型定义验证', () => {
+  runner.test('ConversationPhase 枚举值验证', () => {
     const phases: ConversationPhase[] = ['probing', 'pressuring', 'conflict', 'cooling', 'repairing'];
     runner.assertTrue(phases.length === 5, '应该有5种对话阶段');
   });
 
-  runner.test('TacticalGoal 枚举值验证', () =&gt; {
+  runner.test('TacticalGoal 枚举值验证', () => {
     const goals: TacticalGoal[] = ['advance', 'stabilize', 'delay', 'counterattack', 'disengage'];
     runner.assertTrue(goals.length === 5, '应该有5种战术目标');
   });
 
-  runner.test('DynamicPersonaSchema 结构验证', () =&gt; {
-    const persona: Partial&lt;DynamicPersonaSchema&gt; = {
+  runner.test('DynamicPersonaSchema 结构验证', () => {
+    const persona: Partial<DynamicPersonaSchema> = {
       targetId: 'test',
       updateTick: Date.now(),
       powerIdentity: [],
@@ -175,25 +175,25 @@ runner.suite('类型定义验证', () =&gt; {
     runner.assertTrue(persona !== null);
   });
 
-  runner.test('PowerIdentityTrait 结构验证', () =&gt; {
+  runner.test('PowerIdentityTrait 结构验证', () => {
     const trait: PowerIdentityTrait = { trait: 'test', confidence: 0.8, observationsCount: 1, decayRate: 0.05 };
     runner.assertEqual(trait.trait, 'test');
-    runner.assertTrue(trait.confidence &gt;= 0 &amp;&amp; trait.confidence &lt;= 1);
+    runner.assertTrue(trait.confidence >= 0 && trait.confidence <= 1);
   });
 
-  runner.test('PsychologicalNeed 结构验证', () =&gt; {
+  runner.test('PsychologicalNeed 结构验证', () => {
     const need: PsychologicalNeed = { need: 'test', weight: 0.9 };
     runner.assertEqual(need.need, 'test');
-    runner.assertTrue(need.weight &gt;= 0 &amp;&amp; need.weight &lt;= 1);
+    runner.assertTrue(need.weight >= 0 && need.weight <= 1);
   });
 
-  runner.test('TabooRule 结构验证', () =&gt; {
+  runner.test('TabooRule 结构验证', () => {
     const taboo: TabooRule = { rule: 'test', riskFactor: 0.95 };
     runner.assertEqual(taboo.rule, 'test');
-    runner.assertTrue(taboo.riskFactor &gt;= 0 &amp;&amp; taboo.riskFactor &lt;= 1);
+    runner.assertTrue(taboo.riskFactor >= 0 && taboo.riskFactor <= 1);
   });
 
-  runner.test('ReplyStrategy V2 结构验证', () =&gt; {
+  runner.test('ReplyStrategy V2 结构验证', () => {
     const strategy: ReplyStrategy = {
       label: 'A',
       style: 'test',
@@ -207,7 +207,7 @@ runner.suite('类型定义验证', () =&gt; {
     runner.assertTrue(strategy.expectedReaction !== undefined);
   });
 
-  runner.test('StrategyEvaluation 结构验证', () =&gt; {
+  runner.test('StrategyEvaluation 结构验证', () => {
     const eval: StrategyEvaluation = {
       result: 'success',
       reason: 'test',
@@ -225,8 +225,8 @@ runner.suite('类型定义验证', () =&gt; {
 // ============================================
 // 测试 2: 对话状态机 (conversationStateEngine)
 // ============================================
-runner.suite('对话状态机 (conversationStateEngine)', () =&gt; {
-  runner.test('getPhaseLabel 返回正确标签', () =&gt; {
+runner.suite('对话状态机 (conversationStateEngine)', () => {
+  runner.test('getPhaseLabel 返回正确标签', () => {
     runner.assertEqual(getPhaseLabel('probing'), '1-试探期');
     runner.assertEqual(getPhaseLabel('pressuring'), '2-施压期');
     runner.assertEqual(getPhaseLabel('conflict'), '3-冲突期');
@@ -234,7 +234,7 @@ runner.suite('对话状态机 (conversationStateEngine)', () =&gt; {
     runner.assertEqual(getPhaseLabel('repairing'), '5-关系修复期');
   });
 
-  runner.test('getPhaseStrategyHint 返回正确提示', () =&gt; {
+  runner.test('getPhaseStrategyHint 返回正确提示', () => {
     runner.assertContains(getPhaseStrategyHint('probing'), '试探');
     runner.assertContains(getPhaseStrategyHint('pressuring'), '施压');
     runner.assertContains(getPhaseStrategyHint('conflict'), '冲突');
@@ -243,43 +243,43 @@ runner.suite('对话状态机 (conversationStateEngine)', () =&gt; {
   });
 
   // 启发式分类测试
-  runner.test('启发式分类 - 冲突期关键词', () =&gt; {
+  runner.test('启发式分类 - 冲突期关键词', () => {
     // 测试内部函数（通过反射或模拟）
     const text = '你凭什么这样对我？我忍不了了！';
     const conflictKeywords = ['生气', '愤怒', '不满', '凭什么', '过分', '忍不了', '吵', '骂', '滚', '烦死'];
-    const hasConflict = conflictKeywords.some(k =&gt; text.includes(k));
+    const hasConflict = conflictKeywords.some(k => text.includes(k));
     runner.assertTrue(hasConflict, '应该包含冲突关键词');
   });
 
-  runner.test('启发式分类 - 施压期关键词', () =&gt; {
+  runner.test('启发式分类 - 施压期关键词', () => {
     const text = '赶紧给我回到底什么时候能搞定？';
     const pressureKeywords = ['赶紧', '马上', '催', '什么时候', '怎么还没', '到底', '快点', '立刻', '现在'];
-    const hasPressure = pressureKeywords.some(k =&gt; text.includes(k));
+    const hasPressure = pressureKeywords.some(k => text.includes(k));
     runner.assertTrue(hasPressure, '应该包含施压关键词');
   });
 
-  runner.test('启发式分类 - 冷处理期关键词', () =&gt; {
+  runner.test('启发式分类 - 冷处理期关键词', () => {
     const text = '嗯，哦，好的，随便你吧';
     const coolingKeywords = ['嗯', '哦', '好的', '随便', '无所谓', '不知道', '还行'];
-    const hasCooling = coolingKeywords.some(k =&gt; text.includes(k));
+    const hasCooling = coolingKeywords.some(k => text.includes(k));
     runner.assertTrue(hasCooling, '应该包含冷处理关键词');
   });
 
-  runner.test('启发式分类 - 修复期关键词', () =&gt; {
+  runner.test('启发式分类 - 修复期关键词', () => {
     const text = '对不起，我错了，别生气了';
     const repairKeywords = ['对不起', '抱歉', '不好意思', '和好', '原谅', '想你了', '别生气'];
-    const hasRepair = repairKeywords.some(k =&gt; text.includes(k));
+    const hasRepair = repairKeywords.some(k => text.includes(k));
     runner.assertTrue(hasRepair, '应该包含修复关键词');
   });
 
-  runner.test('启发式分类 - 试探期关键词', () =&gt; {
+  runner.test('启发式分类 - 试探期关键词', () => {
     const text = '你觉得怎么样？能不能帮我个忙？';
     const probeKeywords = ['你觉得', '怎么样', '是不是', '能不能', '有没有', '想不想'];
-    const hasProbe = probeKeywords.some(k =&gt; text.includes(k));
+    const hasProbe = probeKeywords.some(k => text.includes(k));
     runner.assertTrue(hasProbe, '应该包含试探关键词');
   });
 
-  runner.test('LLM分类 - null/undefined输入fallback', async () =&gt; {
+  runner.test('LLM分类 - null/undefined输入fallback', async () => {
     const settings: AppSettings = {
       provider: 'deepseek',
       apiKey: 'test',
@@ -299,14 +299,14 @@ runner.suite('对话状态机 (conversationStateEngine)', () =&gt; {
 // ============================================
 // 测试 3: 反馈评估器 (feedbackEvaluator)
 // ============================================
-runner.suite('反馈评估器 (feedbackEvaluator)', () =&gt; {
-  runner.test('loadEvaluations - 空存储返回空数组', () =&gt; {
+runner.suite('反馈评估器 (feedbackEvaluator)', () => {
+  runner.test('loadEvaluations - 空存储返回空数组', () => {
     runner.clearStorage();
     const evals = loadEvaluations();
     runner.assertEqual(evals.length, 0);
   });
 
-  runner.test('saveEvaluations / loadEvaluations - 保存和加载', () =&gt; {
+  runner.test('saveEvaluations / loadEvaluations - 保存和加载', () => {
     runner.clearStorage();
     const eval: StrategyEvaluation = {
       result: 'success',
@@ -324,10 +324,10 @@ runner.suite('反馈评估器 (feedbackEvaluator)', () =&gt; {
     runner.assertEqual(loaded[0].contactName, '张三');
   });
 
-  runner.test('saveEvaluations - 只保留最近50条', () =&gt; {
+  runner.test('saveEvaluations - 只保留最近50条', () => {
     runner.clearStorage();
     const manyEvals: StrategyEvaluation[] = [];
-    for (let i = 0; i &lt; 100; i++) {
+    for (let i = 0; i < 100; i++) {
       manyEvals.push({
         result: 'success',
         reason: `test${i}`,
@@ -341,10 +341,10 @@ runner.suite('反馈评估器 (feedbackEvaluator)', () =&gt; {
     }
     saveEvaluations(manyEvals);
     const loaded = loadEvaluations();
-    runner.assertTrue(loaded.length &lt;= 50);
+    runner.assertTrue(loaded.length <= 50);
   });
 
-  runner.test('getEvaluationsByContact - 按联系人筛选', () =&gt; {
+  runner.test('getEvaluationsByContact - 按联系人筛选', () => {
     runner.clearStorage();
     const e1: StrategyEvaluation = {
       result: 'success', reason: 't', adjustment: 't', timestamp: Date.now(),
@@ -362,7 +362,7 @@ runner.suite('反馈评估器 (feedbackEvaluator)', () =&gt; {
     runner.assertEqual(getEvaluationsByContact('王五').length, 0);
   });
 
-  runner.test('getRecentEvaluations - 按时间排序取最近', () =&gt; {
+  runner.test('getRecentEvaluations - 按时间排序取最近', () => {
     runner.clearStorage();
     const now = Date.now();
     const e1: StrategyEvaluation = { result: 'success', reason: 't1', adjustment: 't', timestamp: now - 1000, contactName: '张三', strategyLabel: 'A', strategyContent: 't', opponentResponse: 't' };
@@ -374,13 +374,13 @@ runner.suite('反馈评估器 (feedbackEvaluator)', () =&gt; {
     runner.assertEqual(recent[0].reason, 't2'); // 最新的应该在前
   });
 
-  runner.test('buildFeedbackSection - 无历史返回空', () =&gt; {
+  runner.test('buildFeedbackSection - 无历史返回空', () => {
     runner.clearStorage();
     const section = buildFeedbackSection('张三');
     runner.assertEqual(section, '');
   });
 
-  runner.test('buildFeedbackSection - 有历史返回正确格式', () =&gt; {
+  runner.test('buildFeedbackSection - 有历史返回正确格式', () => {
     runner.clearStorage();
     const e: StrategyEvaluation = { result: 'success', reason: '效果不错', adjustment: '继续保持', timestamp: Date.now(), contactName: '张三', strategyLabel: 'A', strategyContent: 'test', opponentResponse: 'test' };
     saveEvaluations([e]);
@@ -389,7 +389,7 @@ runner.suite('反馈评估器 (feedbackEvaluator)', () =&gt; {
     runner.assertContains(section, '✅');
   });
 
-  runner.test('buildHistoricalEvaluationsSummary - 统计正确', () =&gt; {
+  runner.test('buildHistoricalEvaluationsSummary - 统计正确', () => {
     runner.clearStorage();
     const e1: StrategyEvaluation = { result: 'success', reason: 't', adjustment: 'a', timestamp: Date.now(), contactName: '张三', strategyLabel: 'A', strategyContent: 't', opponentResponse: 't' };
     const e2: StrategyEvaluation = { result: 'failure', reason: 't', adjustment: 'a', timestamp: Date.now(), contactName: '张三', strategyLabel: 'A', strategyContent: 't', opponentResponse: 't' };
@@ -401,12 +401,12 @@ runner.suite('反馈评估器 (feedbackEvaluator)', () =&gt; {
     runner.assertContains(summary, '中性1');
   });
 
-  runner.test('calculateSimpleSimilarity - 相同字符串返回1', () =&gt; {
+  runner.test('calculateSimpleSimilarity - 相同字符串返回1', () => {
     const sim = (calculateSimpleSimilarity as any)('hello', 'hello');
     runner.assertEqual(sim, 1);
   });
 
-  runner.test('calculateSimpleSimilarity - 空字符串返回0', () =&gt; {
+  runner.test('calculateSimpleSimilarity - 空字符串返回0', () => {
     const sim1 = (calculateSimpleSimilarity as any)('', 'hello');
     const sim2 = (calculateSimpleSimilarity as any)('hello', '');
     const sim3 = (calculateSimpleSimilarity as any)('', '');
@@ -415,12 +415,12 @@ runner.suite('反馈评估器 (feedbackEvaluator)', () =&gt; {
     runner.assertEqual(sim3, 0);
   });
 
-  runner.test('calculateSimpleSimilarity - 相似度计算正确', () =&gt; {
+  runner.test('calculateSimpleSimilarity - 相似度计算正确', () => {
     const sim = (calculateSimpleSimilarity as any)('abcde', 'aecf');
-    runner.assertTrue(sim &gt; 0 &amp;&amp; sim &lt; 1);
+    runner.assertTrue(sim > 0 && sim < 1);
   });
 
-  runner.test('detectFeedbackOpportunity - 无上次策略返回null', () =&gt; {
+  runner.test('detectFeedbackOpportunity - 无上次策略返回null', () => {
     const result = detectFeedbackOpportunity('张三', ['test'], '');
     runner.assertEqual(result, null);
   });
@@ -429,21 +429,21 @@ runner.suite('反馈评估器 (feedbackEvaluator)', () =&gt; {
 // ============================================
 // 测试 4: 提示词服务 (promptService)
 // ============================================
-runner.suite('提示词服务 (promptService)', () =&gt; {
-  runner.test('loadPrompts - 首次加载返回默认模板', () =&gt; {
+runner.suite('提示词服务 (promptService)', () => {
+  runner.test('loadPrompts - 首次加载返回默认模板', () => {
     runner.clearStorage();
     const prompts = loadPrompts();
-    runner.assertTrue(prompts.length &gt;= 5); // 应该有5个V2模板
+    runner.assertTrue(prompts.length >= 5); // 应该有5个V2模板
   });
 
-  runner.test('getPrompt - 可以获取system-main', () =&gt; {
+  runner.test('getPrompt - 可以获取system-main', () => {
     runner.clearStorage();
     const prompt = getPrompt('system-main');
     runner.assertTrue(prompt !== null);
     runner.assertContains(prompt.name, '军师引擎');
   });
 
-  runner.test('getPrompt - 可以获取style-extraction', () =&gt; {
+  runner.test('getPrompt - 可以获取style-extraction', () => {
     runner.clearStorage();
     const prompt = getPrompt('style-extraction');
     runner.assertTrue(prompt !== null);
@@ -451,7 +451,7 @@ runner.suite('提示词服务 (promptService)', () =&gt; {
     runner.assertContains(prompt.content, 'powerIdentity');
   });
 
-  runner.test('getPrompt - 可以获取reply-generation', () =&gt; {
+  runner.test('getPrompt - 可以获取reply-generation', () => {
     runner.clearStorage();
     const prompt = getPrompt('reply-generation');
     runner.assertTrue(prompt !== null);
@@ -461,28 +461,28 @@ runner.suite('提示词服务 (promptService)', () =&gt; {
     runner.assertContains(prompt.content, 'feedbackSection');
   });
 
-  runner.test('getPrompt - 可以获取phase-classification', () =&gt; {
+  runner.test('getPrompt - 可以获取phase-classification', () => {
     runner.clearStorage();
     const prompt = getPrompt('phase-classification');
     runner.assertTrue(prompt !== null);
     runner.assertContains(prompt.name, '关系博弈雷达');
   });
 
-  runner.test('getPrompt - 可以获取strategy-evaluation', () =&gt; {
+  runner.test('getPrompt - 可以获取strategy-evaluation', () => {
     runner.clearStorage();
     const prompt = getPrompt('strategy-evaluation');
     runner.assertTrue(prompt !== null);
     runner.assertContains(prompt.name, '策略效果评估');
   });
 
-  runner.test('updatePrompt - 更新可以保存', () =&gt; {
+  runner.test('updatePrompt - 更新可以保存', () => {
     runner.clearStorage();
     updatePrompt('system-main', { name: 'test' });
     const prompt = getPrompt('system-main');
     runner.assertEqual(prompt.name, 'test');
   });
 
-  runner.test('resetPromptToDefault - 可以重置到默认', () =&gt; {
+  runner.test('resetPromptToDefault - 可以重置到默认', () => {
     runner.clearStorage();
     updatePrompt('system-main', { name: 'modified' });
     resetPromptToDefault('system-main');
@@ -490,13 +490,13 @@ runner.suite('提示词服务 (promptService)', () =&gt; {
     runner.assertContains(prompt.name, '军师引擎');
   });
 
-  runner.test('formatPrompt - 变量替换正确', () =&gt; {
+  runner.test('formatPrompt - 变量替换正确', () => {
     const mockPrompt = { content: 'Hello {name}, today is {day}', id: 'test', name: 't', description: 't', category: 'system', variables: ['name', 'day'], isDefault: true, createdAt: 0, updatedAt: 0 };
     const formatted = formatPrompt(mockPrompt, { name: '张三', day: '周一' });
     runner.assertEqual(formatted, 'Hello 张三, today is 周一');
   });
 
-  runner.test('loadPrompts - 自动检测和升级旧格式', () =&gt; {
+  runner.test('loadPrompts - 自动检测和升级旧格式', () => {
     runner.clearStorage();
     // 保存一个旧格式的prompt（包含"顺从推进"或"委婉甩锅"）
     const oldPrompts = [{
@@ -514,7 +514,7 @@ runner.suite('提示词服务 (promptService)', () =&gt; {
 
     // 重新加载应该自动升级
     const prompts = loadPrompts();
-    runner.assertTrue(prompts.length &gt; 1); // 应该有多个V2模板
+    runner.assertTrue(prompts.length > 1); // 应该有多个V2模板
   });
 });
 
@@ -668,7 +668,7 @@ runner.suite('加权画像服务 (personaService)', () => {
     runner.assertContains(formatted, '沟通禁区');
   });
 
-  runner.test('applyDecay - 时间&lt;24小时不衰减', () => {
+  runner.test('applyDecay - 时间<24小时不衰减', () => {
     const persona: DynamicPersonaSchema = {
       targetId: '张三',
       updateTick: Date.now(),
@@ -825,7 +825,7 @@ runner.suite('边界条件和异常处理', () => {
     runner.assertTrue(FALLBACK_STRATEGIES.length === 3);
     // promptService有fallback
     runner.clearStorage();
-    runner.assertTrue(loadPrompts().length &gt; 0);
+    runner.assertTrue(loadPrompts().length > 0);
   });
 
   runner.test('数组索引越界 - 不会导致崩溃', () => {
